@@ -73,7 +73,7 @@ func update():
 
 	n = h.size()
 	if n == 0 or h[0][0] >= f: return show_box(false) # aucun nichage
-	i = max(0, n - 2 * m)
+	i = max(0, n - m)
 
 	while i < n: # du bloc racine au bloc niché
 
@@ -84,7 +84,7 @@ func update():
 			box.append(t[0], t[1], t[2], t[2] + t[3])
 			f += 1
 
-		i += 2
+		i += 1
 
 	n = editor_script.get_line_count()
 	if box.digits != n: box.set_digits(str(n).length())
