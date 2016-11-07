@@ -6,6 +6,7 @@
 #
 # append ..............	Ajoute une ligne nichée dans la précédente
 # clear ...............	Supprime toutes les lignes
+# reload_settings .....	Recharge les paramètres de l'éditeur
 # set_digits ..........	Définit le nombre de chiffres des numéros de lignes
 # set_max_lines .......	Définit le nombre maximal de lignes affichées
 # size ................	Récupére le nombre de lignes
@@ -23,9 +24,11 @@ const _TEXT_EDITOR = "text_editor/%s"
 const _KEYWORD_COLOR = _TEXT_EDITOR % "keyword_color"
 const _SHOW_LINE_NUMBERS = _TEXT_EDITOR % "show_line_numbers"
 const _LINE_NUMBER_COLOR = _TEXT_EDITOR % "line_number_color"
-const _COLOR_FORMAT = "[color=#%s]%s[/color]"
-const _NUMBERED_LINE = "[color=#%s]%0*d[/color] %s[color=#%s]%s[/color]%s"
-const _NO_NUMBERED_LINE = "%s[color=#%s]%s[/color]%s"
+const _SYNTAX_HIGHLIGHTING = _TEXT_EDITOR % "syntax_highlighting"
+const _HIGHLIGHTED_NUMBERED_LINE = "[color=#%s]%0*d[/color] %s[color=#%s]%s[/color]%s"
+const _HIGHLIGHTED_LINE = "%s[color=#%s]%s[/color]%s"
+const _NUMBERED_LINE = "%0*d %s%s%s"
+const _LINE = "%s%s%s"
 
 var digits setget set_digits
 
@@ -77,6 +80,30 @@ func clear():
 	_max_lines = -1
 	_update_display()
 
+#.............................................................................................................
+
+# Recharge les paramètres de l'éditeur.
+# La méthode doit être appelée par le plugin à cause de la police par défaut qui ne peut pas être récupérée.
+
+func reload_settings(font):
+
+	_theme.set_font("normal_font", _RICH_TEXT_LABEL, font)
+	var b = _theme.get_stylebox("panel", "Panel")
+	var c = _settings.get(_TEXT_EDITOR % "background_color")
+	c.a = 0.7
+	b.set_bg_color(c)
+	var c = _settings.get(_TEXT_EDITOR % "text_color")
+	_theme.set_color("default_color", _RICH_TEXT_LABEL, c)
+	c.a = 0.5
+	b.set_light_color(c)
+	b.set_dark_color(c)
+	set_theme(_theme)
+
+	for i in _lines:
+
+		i.label.set_theme(_theme)
+		_update_line(i)
+
 #.........................................................................................................
 
 # Définit le nombre de chiffres des numéros de lignes
@@ -90,7 +117,14 @@ func set_digits(value): # setter
 
 #.............................................................................................................
 
-# Définit le nombre maximal de lignes affichées.
+func set_font(font):
+
+	_theme.set_font("normal_font", _RICH_TEXT_LABEL, font)
+	for i in _lines: _update_line(i)
+
+#.............................................................................................................
+
+# Définit le nombre maximal de lignes affichées (>= 0).
 # Il intervient quand le nombre de lignes à afficher est supérieur au nombre de lignes disponibles au-dessus
 # de la ligne en cours.
 
@@ -148,21 +182,6 @@ func _on_resized():
 
 #.............................................................................................................
 
-func _on_settings_changed():
-
-	var b = get_theme().get_stylebox("panel", "Panel")
-	var c = _settings.get(_TEXT_EDITOR % "background_color")
-	c.a = 0.7
-	b.set_bg_color(c)
-	var c = _settings.get(_TEXT_EDITOR % "text_color")
-	_theme.set_color("default_color", _RICH_TEXT_LABEL, c)
-	c.a = 0.5
-	b.set_light_color(c)
-	b.set_dark_color(c)
-	for i in _lines: _update_line(i)
-
-#.............................................................................................................
-
 func _remove_all():
 
 	for i in _lines:
@@ -178,17 +197,28 @@ func _update_line(l):
 
 	var s = l.code.substr(0, l.begin) # indentation
 	var k = l.code.substr(l.begin, l.end - l.begin) # mot-clef
-	var e = l.code.substr(l.end, l.code.length() - l.end) # fin de la ligne
-	var kc = _settings.get(_KEYWORD_COLOR).to_html()
+	var e = l.code.substr(l.end, l.code.length() - l.end) # fin de ligne
 
-	if _settings.get(_SHOW_LINE_NUMBERS):
+	if _settings.get(_SYNTAX_HIGHLIGHTING):
 
-		var nc = _settings.get(_LINE_NUMBER_COLOR).to_html()
-		s = _NUMBERED_LINE % [nc, digits, l.line, s, kc, k, e]
+		var kc = _settings.get(_KEYWORD_COLOR).to_html()
+
+		if _settings.get(_SHOW_LINE_NUMBERS):
+
+			var nc = _settings.get(_LINE_NUMBER_COLOR).to_html()
+			s = _HIGHLIGHTED_NUMBERED_LINE % [nc, digits, l.line, s, kc, k, e]
+
+		else:
+
+			s = _HIGHLIGHTED_LINE % [s, kc, k, e]
+
+	elif _settings.get(_SHOW_LINE_NUMBERS):
+
+		s = _NUMBERED_LINE % [digits, l.line, s, k, e]
 
 	else:
 
-		s = _NO_NUMBERED_LINE % [s, kc, k, e]
+		s = _LINE % [s, k, e]
 
 	l.label.set_bbcode(s)
 
@@ -222,12 +252,11 @@ func _update_display():
 
 #.............................................................................................................
 
-func _init(settings, top_margin): # EditorSettings
+func _init(settings, top_margin): # EditorSettings, int
 
 	_settings = settings
 
 	_theme = Theme.new()
-	_theme.set_font("normal_font", _RICH_TEXT_LABEL, load(_settings.get(_TEXT_EDITOR % "font")))
 	_theme.set_constant("separation", "VBoxContainer", 1)
 
 	var b = StyleBoxFlat.new()
@@ -246,9 +275,6 @@ func _init(settings, top_margin): # EditorSettings
 	_lines = []
 
 	for i in range(_CAPACITY): _lines.append(Line.new(_theme))
-
-	_on_settings_changed()
-	settings.connect("settings_changed", self, "_on_settings_changed")
 	self.connect("resized", self, "_on_resized")
 
 #.............................................................................................................

@@ -13,15 +13,20 @@ const V_SCROLL_BAR = "VScrollBar"
 const H_SCROLL_BAR = "HScrollBar"
 const TOP_MARGIN = 2
 
-var editor_tabs
-var editor_script
-var editor_vscrollbar
-var editor_hscrollbar
-var box
-var re
-var timer
-var state # 0: désactivé, 1: actualisation immédiate, 2: actualisation au tic suivant
-var sleep # attendre un défilement vertical avant d'actualiser
+const IDLE = 0
+const UPDATE = 1
+const WAIT = 2
+const SLEEP = 3
+
+var editor_tabs # TabContainer
+var editor_script # TextEdit
+var editor_vscrollbar # VScrollBar
+var editor_hscrollbar # HScrollBar
+var box # Box.gd
+var re # RegEx
+var timer # Timer
+var state # int
+var default_font # Font
 
 #.............................................................................................................
 
@@ -29,26 +34,25 @@ var sleep # attendre un défilement vertical avant d'actualiser
 
 func update():
 
-	if state == 2:
-		state = 1
+	if state == WAIT:
+		state = UPDATE
 		return
 
 	timer.stop()
-	if state == 0: return
+	if state != UPDATE: return
 
-	state = 0
+	state = IDLE
 	box.clear()
 
 	var f = editor_vscrollbar.get_value() # première ligne visible
 	if f == 0 or editor_vscrollbar.get_page() == 0: return show_box(false)
 
-	var l = max(f, editor_script.cursor_get_line()) # ligne en cours (minimum f)
+	var l = max(f, editor_script.cursor_get_line()) # ligne en cours
 	var i = l - 1 # ligne de départ
 	var m = i - f # nombre maximal de lignes visibles
-	if m <= 0: return show_box(false)
+	var s = get_next_indent(l) # indentation initiale
 
-	var s = get_next_indent(i) # indentation initiale
-	if s == 0: return show_box(false)
+	if m < 1 or s == 0: return show_box(false)
 
 	var r = s # indentation du bloc racine
 	var n # indentation du bloc parcouru
@@ -149,7 +153,7 @@ func on_cursor_changed(): wait()
 
 func on_vscroll(value):
 
-	sleep = false
+	state = IDLE
 	wait()
 
 #.............................................................................................................
@@ -163,34 +167,50 @@ func on_hscroll(value):
 
 func on_box_mouse_enter():
 
-	sleep = true
 	cancel()
+	state = SLEEP
+
+#.............................................................................................................
+
+func on_resized():	wait()
 
 #.............................................................................................................
 
 func cancel():
 
 	timer.stop()
-	state = 0
+	state = IDLE
 	show_box(false)
 
 #.............................................................................................................
 
 func wait():
 
-	if sleep: return
+	if state == SLEEP: return
 
-	if state == 0:
+	if state == IDLE:
 
 		show_box(false)
-		state = 1
+		state = UPDATE
 		timer.set_wait_time(DELAY_1)
 		timer.start()
 
-	elif state == 1:
+	elif state == UPDATE:
 
-		state = 2
+		state = WAIT
 		timer.set_wait_time(DELAY_2)
+
+#.............................................................................................................
+
+func on_settings_changed():
+
+	if box == null: return
+
+	wait()
+	var f = get_editor_settings().get("text_editor/font")
+
+	if f.length() > 0: box.reload_settings(load(f))
+	elif default_font != null: box.reload_settings(default_font)
 
 #.............................................................................................................
 
@@ -219,6 +239,7 @@ func unregister_script():
 
 		editor_script.remove_child(timer)
 		editor_script.disconnect("cursor_changed", self, "on_cursor_changed")
+		editor_script.disconnect("resized", self, "on_resized")
 		editor_script = null
 
 	if editor_vscrollbar != null:
@@ -248,8 +269,6 @@ func find_editor_script():
 
 				if j.get_type() == TEXT_EDIT:
 
-					editor_script = j
-
 					for k in j.get_children():
 
 						if k.get_type() == V_SCROLL_BAR:
@@ -265,11 +284,16 @@ func find_editor_script():
 							if editor_vscrollbar != null: break
 
 					if editor_vscrollbar != null and editor_hscrollbar != null:
-						editor_script.connect("cursor_changed", self, "on_cursor_changed")
-						editor_script.add_child(timer)
 
-					else:
-						unregister_script()
+						editor_script = j
+
+						if default_font == null:
+							default_font = j.get("custom_fonts/font")
+							on_settings_changed()
+
+						j.connect("cursor_changed", self, "on_cursor_changed")
+						j.connect("resized", self, "on_resized")
+						j.add_child(timer)
 
 					return
 
@@ -293,8 +317,6 @@ func find_editor_tabs():
 
 						if k.get_type() == "TabContainer":
 
-							if not k.is_connected("tab_changed", self, "on_tab_changed"):
-								k.connect("tab_changed", self, "on_tab_changed")
 							editor_tabs = k
 							return
 
@@ -305,6 +327,39 @@ func find_editor_tabs():
 #.. Node .....................................................................................................
 
 func _enter_tree():
+
+	var Box = preload("Box.gd")
+
+	if Box == null:
+
+		OS.alert("Box.gd not found", "Nested Code Box plugin error")
+		return
+
+	find_editor_tabs()
+
+	if editor_tabs == null:
+
+		OS.alert("Unable to find editor tabs", "Nested Code Box plugin error")
+		return
+
+	state = IDLE
+	var s = get_editor_settings()
+	box = Box.new(s, TOP_MARGIN)
+	box.set_v_size_flags(Control.SIZE_EXPAND_FILL)
+
+	# 0: tout, 1: code, 2: mot clef
+	# (\t| )* a toujours une longueur maximale de 1 caractère quelque soit le nombre de caractères,
+	# donc indentation = longueur de 0 - longueur de 1
+	re = RegEx.new()
+	re.compile("^(?:\t| )*((func|static func|if|for|else|elif|while|class)(?: |:|\t)*.*)")
+
+	timer = Timer.new()
+	timer.set_wait_time(DELAY_1)
+
+	editor_tabs.connect("tab_changed", self, "on_tab_changed")
+	timer.connect("timeout", self, "update")
+	box.connect("mouse_enter", self, "on_box_mouse_enter")
+	s.connect("settings_changed", self, "on_settings_changed")
 
 	find_editor_script()
 	if editor_script != null: wait()
@@ -332,39 +387,7 @@ func _exit_tree():
 		box.free()
 		box = null
 
+	get_editor_settings().disconnect("settings_changed", self, "on_settings_changed")
 	re = null
-
-
-#.. Object ...................................................................................................
-
-func _init():
-
-	var Box = preload("Box.gd")
-
-	if Box == null:
-
-		print("Nested Code Box plugin: Box.gd not found")
-		return
-
-	box = Box.new(get_editor_settings(), TOP_MARGIN)
-	box.set_v_size_flags(Control.SIZE_EXPAND_FILL)
-	box.connect("mouse_enter", self, "on_box_mouse_enter")
-
-	state = 0
-	sleep = false
-	find_editor_tabs()
-
-	if editor_tabs == null:
-
-		print("Nested Code Box plugin: Unable to find editor tabs")
-		return
-
-	# 0: tout, 1: code
-	# (\t| )* a toujours une longueur maximale de 1 caractère quelque soit le nombre de caractères,
-	# donc indentation = longueur de 0 - longueur de 1
-	re = RegEx.new()
-	re.compile("^(?:\t| )*((func|if|for|else|elif|while|class)(?: |:|\t)*.*)")
-
-	timer = Timer.new()
-	timer.set_wait_time(DELAY_1)
-	timer.connect("timeout", self, "update")
+	state = null
+	default_font = null
