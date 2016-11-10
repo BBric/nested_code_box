@@ -16,7 +16,7 @@ The used editor settings are:
 * Text Editor > Font
 
 cfg.json:
-* max_lines : The number of lines is <= to this number
+* max_lines : The number of lines is <= to this number (0 = auto)
 * from_root : The first line is the less indented block but some intercalated blocks can be absents
 * hide_visible : Allow the box to hide a parent block (taken back in the box), the number of lines is often bigger
 * hide_first_line : Override 'hide_visible=false' for the first line (and the following if the blocks are closes)
