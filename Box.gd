@@ -4,56 +4,48 @@
 #
 # ** MÉTHODES *****************************************
 #
-# append ..............	Ajoute une ligne nichée dans la précédente
+# append ..............	Ajoute une ligne
 # clear ...............	Supprime toutes les lignes
 # reload_settings .....	Recharge les paramètres de l'éditeur
 # set_digits ..........	Définit le nombre de chiffres des numéros de lignes
-# set_max_lines .......	Définit le nombre maximal de lignes affichées
 # size ................	Récupére le nombre de lignes
 #
 #.............................................................................................................
 
-tool
 extends Panel
 
 #.............................................................................................................
 
 const _CAPACITY = 4
-const _RICH_TEXT_LABEL = "RichTextLabel"
-const _TEXT_EDITOR = "text_editor/%s"
-const _KEYWORD_COLOR = _TEXT_EDITOR % "keyword_color"
-const _SHOW_LINE_NUMBERS = _TEXT_EDITOR % "show_line_numbers"
-const _LINE_NUMBER_COLOR = _TEXT_EDITOR % "line_number_color"
-const _SYNTAX_HIGHLIGHTING = _TEXT_EDITOR % "syntax_highlighting"
 const _HIGHLIGHTED_NUMBERED_LINE = "[color=#%s]%0*d[/color] %s[color=#%s]%s[/color]%s"
 const _HIGHLIGHTED_LINE = "%s[color=#%s]%s[/color]%s"
 const _NUMBERED_LINE = "%0*d %s%s%s"
 const _LINE = "%s%s%s"
 
-var digits setget set_digits
-
+var _plugin # WeakRef<NestedCodeBox.gd>
 var _container # VBoxContainer
-var _lines # Array
-var _max_lines # int
-var _settings # EditorSettings
+var _lines # [Line]
 var _theme # Theme
+var _digits # int
+var _line_number_color # String
+var _keyword_color # String
+var _syntax_highlighting # bool
+var _show_line_numbers # bool
 
 #.............................................................................................................
 
-# Ajoute une ligne nichée dans la précédente.
+# Ajoute une ligne.
 
 func append(line, code, keyword_begin, keyword_end): # int, String, int, int
 
 	var l
 
-	for i in _lines:
-
+	for i in _lines: # Line
 		if i.line < 0:
 			l = i
 			break
 
 	if l == null:
-
 		l = Line.new(_theme)
 		_lines.append(l)
 
@@ -62,7 +54,7 @@ func append(line, code, keyword_begin, keyword_end): # int, String, int, int
 	l.begin = keyword_begin
 	l.end = keyword_end
 	_update_line(l)
-	_update_display()
+	_container.add_child(l.label) # la ligne n'est jamais déjà affichée
 
 #.............................................................................................................
 
@@ -70,31 +62,34 @@ func append(line, code, keyword_begin, keyword_end): # int, String, int, int
 
 func clear():
 
-	if _max_lines < 0: return
+	for i in _lines:
 
-	_remove_all()
+		if i.label.get_parent() == _container: _container.remove_child(i.label)
+		i.line = -1
+
 	_lines.resize(_CAPACITY)
-
-	for i in _lines: i.line = -1
-
-	_max_lines = -1
-	_update_display()
 
 #.............................................................................................................
 
 # Recharge les paramètres de l'éditeur.
-# La méthode doit être appelée par le plugin à cause de la police par défaut qui ne peut pas être récupérée.
 
-func reload_settings(font):
+func reload_settings(font, background_alpha, border_alpha):
 
-	_theme.set_font("normal_font", _RICH_TEXT_LABEL, font)
+	var s = _plugin.get_ref().get_editor_settings()
+	var g = "text_editor/%s"
+	_keyword_color = s.get(g % "keyword_color").to_html(false)
+	_line_number_color = s.get(g % "line_number_color").to_html(false)
+	_syntax_highlighting = s.get(g % "syntax_highlighting")
+	_show_line_numbers = s.get(g % "show_line_numbers")
+
+	_theme.set_font("normal_font", "RichTextLabel", font)
 	var b = _theme.get_stylebox("panel", "Panel")
-	var c = _settings.get(_TEXT_EDITOR % "background_color")
-	c.a = 0.7
+	var c = s.get(g % "background_color")
+	c.a = background_alpha
 	b.set_bg_color(c)
-	var c = _settings.get(_TEXT_EDITOR % "text_color")
-	_theme.set_color("default_color", _RICH_TEXT_LABEL, c)
-	c.a = 0.5
+	var c = s.get(g % "text_color")
+	_theme.set_color("default_color", "RichTextLabel", c)
+	c.a = border_alpha
 	b.set_light_color(c)
 	b.set_dark_color(c)
 	set_theme(_theme)
@@ -108,40 +103,24 @@ func reload_settings(font):
 
 # Définit le nombre de chiffres des numéros de lignes
 
-func set_digits(value): # setter
+func set_digits(value): # int
 
-	value = max(1, int(value))
-	if value == digits: return
-	digits = value
+	if value == _digits: return
+	_digits = value
 	for i in _lines: _update_line(i)
 
 #.............................................................................................................
 
-func set_font(font):
+func set_font(font): # Font
 
-	_theme.set_font("normal_font", _RICH_TEXT_LABEL, font)
+	_theme.set_font("normal_font", "RichTextLabel", font)
 	for i in _lines: _update_line(i)
-
-#.............................................................................................................
-
-# Définit le nombre maximal de lignes affichées (>= 0).
-# Il intervient quand le nombre de lignes à afficher est supérieur au nombre de lignes disponibles au-dessus
-# de la ligne en cours.
-
-func set_max_lines(value): # int
-
-	value = max(0, int(value))
-	if value == _max_lines: return
-	_max_lines = value
-	_update_display()
 
 #.............................................................................................................
 
 # Récupére le nombre de lignes.
-#
-# visible 	Uniquement les lignes visibles
 
-func size(visible = false):
+func size(): # : int
 
 	var n = 0
 
@@ -149,7 +128,6 @@ func size(visible = false):
 
 		if _lines[i].line < 0: continue
 		n += 1
-		if visible and n == _max_lines: break
 
 	return n
 
@@ -166,7 +144,8 @@ func trace():
 		else: s = ""
 		s += str(i.line + 1) + " " + i.code
 
-	print(s)
+	if s == null: print("empty")
+	else: print(s)
 
 #.............................................................................................................
 
@@ -182,13 +161,6 @@ func _on_resized():
 
 #.............................................................................................................
 
-func _remove_all():
-
-	for i in _lines:
-		if i.label.get_parent() == _container: _container.remove_child(i.label)
-
-#.............................................................................................................
-
 # Actualise le format d'une ligne.
 
 func _update_line(l):
@@ -199,22 +171,19 @@ func _update_line(l):
 	var k = l.code.substr(l.begin, l.end - l.begin) # mot-clef
 	var e = l.code.substr(l.end, l.code.length() - l.end) # fin de ligne
 
-	if _settings.get(_SYNTAX_HIGHLIGHTING):
+	if _syntax_highlighting:
 
-		var kc = _settings.get(_KEYWORD_COLOR).to_html()
+		if _show_line_numbers:
 
-		if _settings.get(_SHOW_LINE_NUMBERS):
-
-			var nc = _settings.get(_LINE_NUMBER_COLOR).to_html()
-			s = _HIGHLIGHTED_NUMBERED_LINE % [nc, digits, l.line, s, kc, k, e]
+			s = _HIGHLIGHTED_NUMBERED_LINE % [_line_number_color, _digits, l.line, s, _keyword_color, k, e]
 
 		else:
 
-			s = _HIGHLIGHTED_LINE % [s, kc, k, e]
+			s = _HIGHLIGHTED_LINE % [s, _keyword_color, k, e]
 
-	elif _settings.get(_SHOW_LINE_NUMBERS):
+	elif _show_line_numbers:
 
-		s = _NUMBERED_LINE % [digits, l.line, s, k, e]
+		s = _NUMBERED_LINE % [_digits, l.line, s, k, e]
 
 	else:
 
@@ -222,39 +191,22 @@ func _update_line(l):
 
 	l.label.set_bbcode(s)
 
-#.............................................................................................................
+#.. Object ...................................................................................................
 
-# Actualise l'affichage des lignes.
+func free():
 
-func _update_display():
-
-	_remove_all()
-
-	if _max_lines == 0: return
-
-	var n = 0
-	var l
-
-	for i in range(_lines.size() - 1, -1, -1):
-
-		if _lines[i].line < 0: continue
-		n += 1
-
-		if i == 0 or (_max_lines > -1 and n == _max_lines):
-
-			for j in range(i, _lines.size()):
-
-				l = _lines[j]
-				if l.line < 0: return
-				if l.label.get_parent() != _container: _container.add_child(l.label)
-
-			return
+	clear()
+	_plugin = null
+	_lines.clear()
+	_lines = null
+	_theme = null
+	_container = null
 
 #.............................................................................................................
 
-func _init(settings, top_margin): # EditorSettings, int
+func _init(plugin, top_margin): # NestedCodeBox.gd, int
 
-	_settings = settings
+	_plugin = weakref(plugin)
 
 	_theme = Theme.new()
 	_theme.set_constant("separation", "VBoxContainer", 1)
@@ -270,8 +222,7 @@ func _init(settings, top_margin): # EditorSettings, int
 	_container.set_margin(MARGIN_LEFT, 14)
 	_container.set_theme(_theme)
 	add_child(_container)
-	_max_lines = -1
-	digits = 1
+	_digits = 1
 	_lines = []
 
 	for i in range(_CAPACITY): _lines.append(Line.new(_theme))
