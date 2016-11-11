@@ -77,8 +77,8 @@ func update():
 
 		if  hide_first_line:
 
-			if i == f and index < s - 1: i = lines[index + 1][0]
-			m = min(i - f, m)
+			if i > f: m = min(i - f, m)
+			elif index < s - 1: m = min(lines[index + 1][0] - f, m)
 
 		elif i == f: # parent en première ligne
 
@@ -115,12 +115,18 @@ func update():
 
 		if n > m:
 
-			if from_root: n = i + m # indice de fin
-			else: i = n - m
+			if from_root:
 
-		else:
+				n = m # indice de fin
 
-			n = i + n # indice de fin
+			else:
+
+				i = n - m
+
+				if index > 0 and i >= index: # minimum 1 bloc caché
+
+					i = index - 1
+					n = i + m
 
 		while i < n: # étape 2 : lignes affichées
 
@@ -129,7 +135,7 @@ func update():
 			i += 1
 
 	box.set_digits(str(editor_script.get_line_count()).length())
-	show_box(true) # m >= 1, index != 0
+	show_box(true) # m > 0, index != 0
 
 #.............................................................................................................
 
