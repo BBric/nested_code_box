@@ -10,11 +10,19 @@ const V_SCROLL_BAR = "VScrollBar"
 const H_SCROLL_BAR = "HScrollBar"
 const CFG_FILE_NAME = "/cfg.json"
 const TOP_MARGIN = 2
+const TEXT_CHANGED = "text_changed"
+const ON_TEXT_CHANGED = "on_text_changed"
+const CURSOR_CHANGED = "cursor_changed"
+const ON_CURSOR_CHANGED = "on_cursor_changed"
+const RESIZED = "resized"
+const ON_RESIZED = "on_resized"
+const VALUE_CHANGED = "value_changed"
+const ON_SCROLL = "on_scroll"
+const CANCEL = "cancel"
 
 const IDLE = 0
 const UPDATE = 1
-const WAIT = 2
-const SLEEP = 3
+const PENDING = 2
 
 var editor_tabs # TabContainer
 var editor_script # TextEdit
@@ -25,17 +33,19 @@ var re # RegEx
 var timer # Timer
 var state # int
 var default_font # Font
-var updating_delay # float
-var activity_delay # float
+var delay # float
 var max_lines # int
 var from_root # bool
 var hide_visible # bool
 var hide_first_line # bool
+var lines_gap # int
 var background_opacity # float
 var border_opacity # float
-var save # bool
+var digits # int
 var lines # Array
 var index # int
+var changed # bool
+var width # int
 
 #.............................................................................................................
 
@@ -43,35 +53,38 @@ var index # int
 
 func update():
 
-	if state == WAIT:
+	if state == PENDING:
 		state = UPDATE
 		return
 
 	if timer != null: timer.stop()
+
 	if state != UPDATE: return
 
 	state = IDLE
 	box.clear()
-
 	var f = editor_vscrollbar.get_value() # première ligne visible
-	if f == 0 or editor_vscrollbar.get_page() == 0: return show_box(false)
+	if f == 0 or editor_vscrollbar.get_page() == 0: return
 
-	var m = editor_script.cursor_get_line() - 1 - f # nombre maximal de lignes visibles
+	var l = editor_script.cursor_get_line()
+	var m = min(l - lines_gap - f, f + editor_vscrollbar.get_page()) # nombre maximal de lignes visibles
+
+	if m < 1: return # aucune ligne ne peut être affichée
+
 	if max_lines > 0: m = min(max_lines, m)
-	if m < 1: return show_box(false)
-
-	find_all_lines()
+	find_all_lines(l)
 	var s = lines.size()
 
-	if s == 0 or index == 0: return show_box(false) # aucune ligne cachée
+	if s == 0 or index == 0: return # aucun bloc hors champ
 
 	var d; var i
+	digits = str(editor_script.get_line_count()).length()
 
 	# 'hide_first_line' est prioritaire sur 'hide_visible', donc si la première ligne visible est un
 	# bloc parent 'hide_visible' est ignorée. En mode ligne unique le bloc est masqué (c'est le seul cas où
-	# un bloc visible est masqué), et en mode multiligne le bloc est ajouté comme une ligne hors champ
+	# un bloc visible est masqué), et en mode multiligne le bloc est ajouté comme s'il était hors champ
 
-	if not hide_visible and index > 0:
+	if not hide_visible and index > 0: # mise à jour de m (toujours positif)
 
 		i = lines[index][0]
 
@@ -82,7 +95,7 @@ func update():
 
 		elif i == f: # parent en première ligne
 
-			return show_box(false)
+			return
 
 		else:
 
@@ -105,7 +118,7 @@ func update():
 		else: n = s
 		i = n # première ligne visible
 
-		while i < s: # étape 1 : lignes visibles cachées par le cadre
+		while i < s: # étape 1 : inclure les lignes visibles cachées par le cadre
 
 			if lines[i][0] > f + n - 1: break
 			n += 1
@@ -123,10 +136,10 @@ func update():
 
 				i = n - m
 
-				if index > 0 and i >= index: # minimum 1 bloc caché
+				if index > 0 and i >= index:
 
-					i = index - 1
-					n = i + m
+					i = index - 1 # minimum 1 bloc hors champ
+					n = i + m # indice de fin
 
 		while i < n: # étape 2 : lignes affichées
 
@@ -134,8 +147,9 @@ func update():
 			box.append(d[0], d[1], d[2], d[2] + d[3])
 			i += 1
 
-	box.set_digits(str(editor_script.get_line_count()).length())
-	show_box(true) # m > 0, index != 0
+	var h = editor_script.get_size().height / editor_vscrollbar.get_page() * box.size() + TOP_MARGIN
+	box.set_size(Vector2(width, h))
+	add_safely(editor_script, box)
 
 #.............................................................................................................
 
@@ -179,12 +193,13 @@ func get_next_indent(i): # int : int
 #.............................................................................................................
 
 # Trouves toutes les lignes. Les données précédentes sont supprimées.
+#
+# i			Ligne de départ exclue
 
-func find_all_lines():
+func find_all_lines(i):
 
-	lines.clear() # lignes sous la forme [numéro, code complet, mot-clef, longueur du mot-clef]
+	lines.clear() # lignes sous la forme [numéro, code complet, indice du mot-clef, longueur du mot-clef]
 	index = -1 # première ligne visible dans lines
-	var i = editor_script.cursor_get_line()
 	var r = get_next_indent(i) # indentation du bloc racine
 
 	if r == 0: return # curseur hors bloc
@@ -216,98 +231,82 @@ func find_all_lines():
 
 #.............................................................................................................
 
-func on_box_mouse_enter():
+# Déplacement du caret.
+
+func on_cursor_changed():
+
+	if changed == true: # déplacement par édition (après on_text_changed)
+
+		changed = false
+		return
+
+	# déplacement par clic
 
 	cancel()
-	state = SLEEP
+
+	if editor_script.cursor_get_column() == 0: return
+
+	var t = editor_script.get_line(editor_script.cursor_get_line())
+	var n = t.length()
+	var c = t.ord_at(0)
+	var i = 1
+
+	while i < n:
+
+		if t.ord_at(i) != c: break
+		i += 1
+
+	if i != editor_script.cursor_get_column(): return
+
+	if state == IDLE:
+
+		state = UPDATE
+		timer.start()
+
+	elif state == UPDATE:
+
+		state = PENDING
 
 #.............................................................................................................
 
-# Déplacement du caret
+func on_resized():
 
-func on_cursor_changed(): wait()
-
-#.............................................................................................................
-
-func on_hscroll(value):
-
-	if editor_hscrollbar.get_value() == 0: wait()
-	else: cancel()
-
-#.............................................................................................................
-
-func on_resized():	wait()
+	cancel()
+	if editor_script != null: width = editor_script.get_size().width - editor_vscrollbar.get_size().width
 
 #.............................................................................................................
 
 func on_settings_changed():
 
-	if box == null: return
-
-	wait()
-	var p = get_editor_settings().get("text_editor/font")
-	var f
-	if p.length() > 0: f = load(p)
-	if f == null: f = default_font
-	box.reload_settings(f, background_opacity, border_opacity)
+	if box != null: box.reload_settings()
 
 #.............................................................................................................
 
-# Changement de script
+# Changement de script.
 
 func on_tab_changed(tab): # int
 
 	cancel()
 	find_editor_script()
-	if editor_script != null: wait()
 
 #.............................................................................................................
 
-func on_vscroll(value):
+func on_text_changed():
 
-	state = IDLE
-	wait()
+	changed = true
+	cancel()
+
+#.............................................................................................................
+
+func on_scroll(value): cancel()
 
 #.............................................................................................................
 
 func cancel():
 
-	timer.stop()
+	if timer != null: timer.stop()
+	if box != null and box.get_parent() != null: box.get_parent().remove_child(box)
 	state = IDLE
-	show_box(false)
-
-#.............................................................................................................
-
-func wait():
-
-	if state == SLEEP: return
-
-	if state == IDLE:
-
-		show_box(false)
-		state = UPDATE
-		timer.set_wait_time(updating_delay)
-		timer.start()
-
-	elif state == UPDATE:
-
-		state = WAIT
-		timer.set_wait_time(activity_delay)
-
-#.............................................................................................................
-
-func show_box(value):
-
-	if timer == null or box == null: return
-	timer.stop()
-
-	if box.get_parent() != null: box.get_parent().remove_child(box)
-	if not value or editor_script == null: return
-
-	var w = editor_script.get_size().width - editor_vscrollbar.get_size().width
-	var h = editor_script.get_size().height / editor_vscrollbar.get_page() * box.size() + TOP_MARGIN
-	box.set_size(Vector2(w, h))
-	editor_script.add_child(box)
 
 #.............................................................................................................
 
@@ -315,22 +314,25 @@ func unregister_script():
 
 	if editor_script != null:
 
-		editor_script.remove_child(timer)
-		editor_script.disconnect("cursor_changed", self, "on_cursor_changed")
-		editor_script.disconnect("resized", self, "on_resized")
+		remove_safely(editor_script, timer)
+		disconnect_safely(editor_script, TEXT_CHANGED, ON_TEXT_CHANGED)
+		disconnect_safely(editor_script, CURSOR_CHANGED, ON_CURSOR_CHANGED)
+		disconnect_safely(editor_script, RESIZED, ON_RESIZED)
 		editor_script = null
 
 	if editor_vscrollbar != null:
 
-		editor_vscrollbar.disconnect("value_changed", self, "on_vscroll")
+		disconnect_safely(editor_vscrollbar, VALUE_CHANGED, ON_SCROLL)
 		editor_vscrollbar = null
 
 	if editor_hscrollbar != null:
 
-		editor_hscrollbar.disconnect("value_changed", self, "on_hscroll")
+		disconnect_safely(editor_hscrollbar, VALUE_CHANGED, ON_SCROLL)
 		editor_hscrollbar = null
 
 #.............................................................................................................
+
+# Trouve le script et les deux barres de défilement (les trois ou aucun).
 
 func find_editor_script():
 
@@ -351,13 +353,11 @@ func find_editor_script():
 						if k.get_type() == V_SCROLL_BAR:
 
 							editor_vscrollbar = k
-							editor_vscrollbar.connect("value_changed", self, "on_vscroll")
 							if editor_hscrollbar != null: break
 
 						if k.get_type() == H_SCROLL_BAR:
 
 							editor_hscrollbar = k
-							editor_hscrollbar.connect("value_changed", self, "on_hscroll")
 							if editor_vscrollbar != null: break
 
 					if editor_vscrollbar != null and editor_hscrollbar != null:
@@ -368,9 +368,13 @@ func find_editor_script():
 							default_font = j.get("custom_fonts/font")
 							on_settings_changed()
 
-						j.connect("cursor_changed", self, "on_cursor_changed")
-						j.connect("resized", self, "on_resized")
-						j.add_child(timer)
+						connect_safely(j, TEXT_CHANGED, ON_TEXT_CHANGED)
+						connect_safely(j, CURSOR_CHANGED, ON_CURSOR_CHANGED)
+						connect_safely(j, RESIZED, ON_RESIZED)
+						connect_safely(editor_vscrollbar, VALUE_CHANGED, ON_SCROLL)
+						connect_safely(editor_hscrollbar, VALUE_CHANGED, ON_SCROLL)
+						width = j.get_size().width - editor_vscrollbar.get_size().width
+						add_safely(j, timer)
 
 					return
 
@@ -401,23 +405,103 @@ func find_editor_tabs():
 
 			return
 
-#.. EditorPlugin .............................................................................................
+#.............................................................................................................
 
-func save_external_data():
+func add_safely(parent, child):
 
-	if not save: return
+	if parent == null or child == null: return
 
-	save = false
+	var p = child.get_parent()
+	if p == parent: return
+
+	if p != null: p.remove_child(child) # ERROR: add_child: Can't add child, already has a parent
+	parent.add_child(child)
+
+#.............................................................................................................
+
+func remove_safely(parent, child):
+
+	if parent != null and child != null and child.get_parent() == parent: parent.remove_child(child)
+
+#.............................................................................................................
+
+func connect_safely(target, name, function): # Object, String, String
+
+	if target != null and not target.is_connected(name, self, function): target.connect(name, self, function)
+
+#.............................................................................................................
+
+func disconnect_safely(target, name, function): # Object, String, String
+
+	if target != null and target.is_connected(name, self, function): target.disconnect(name, self, function)
+
+#.............................................................................................................
+
+func load_config():
+
+	var v = get_script().get_path().get_base_dir() + CFG_FILE_NAME
 	var f = File.new()
+	var r = false # enregistrer les paramètres
 
-	if f.open(get_script().get_path().get_base_dir() + CFG_FILE_NAME, File.WRITE) == OK:
+	if f.open(v, File.READ) == OK:
+
+		var d = {}
+
+		if d.parse_json(f.get_as_text()) == OK:
+
+			v = d.max_lines
+			if typeof(v) != TYPE_REAL: r = true # un entier donne également un float
+			else: max_lines = int(max(0, v))
+
+			v = d.from_root
+			if typeof(v) != TYPE_BOOL: r = true
+			else: from_root = v
+
+			v = d.hide_visible
+			if typeof(v) != TYPE_BOOL: r = true
+			else: hide_visible = v
+
+			v = d.hide_first_line
+			if typeof(v) != TYPE_BOOL: r = true
+			else: hide_first_line = v
+
+			v = d.delay
+			if typeof(v) != TYPE_REAL: r = true
+			else: delay = max(1.0, v)
+
+			v = d.lines_gap
+			if typeof(v) != TYPE_REAL: r = true
+			else: lines_gap = int(clamp(v, 0, 3))
+
+			v = d.background_opacity
+			if typeof(v) != TYPE_REAL: r = true
+			else: background_opacity = clamp(v, 0.0, 1.0)
+
+			v = d.border_opacity
+			if typeof(v) != TYPE_REAL: r = true
+			else: border_opacity = clamp(v, 0.0, 1.0)
+
+		else:
+
+			r = true
+
+	else:
+
+		r = true
+
+	f.close()
+
+	if not r: return
+
+	if f.open(v, File.WRITE) == OK:
 
 		var p = "\n\t\"%s\":%s"
-		var s = "{%s,%s,%s,%s,%s,%s,%s,%s\n}"
-		f.store_string(s % [p % ["max_lines", max_lines], p % ["from_root", str(from_root).to_lower()],\
+		var c = "{%s,%s,%s,%s,%s,%s,%s,%s\n}"
+		f.store_string(c % [p % ["max_lines", max_lines], p % ["from_root", str(from_root).to_lower()],\
 							p % ["hide_visible", str(hide_visible).to_lower()],\
 							p % ["hide_first_line", str(hide_first_line).to_lower()],\
-							p % ["updating_delay", updating_delay], p % ["activity_delay", activity_delay],\
+							p % ["delay", delay],\
+							p % ["lines_gap", lines_gap],\
 							p % ["background_opacity", background_opacity],\
 							p % ["border_opacity", border_opacity]])
 
@@ -445,58 +529,15 @@ func _enter_tree():
 	from_root = false
 	hide_visible = false
 	hide_first_line = true
-	updating_delay = 6.5
-	activity_delay = 3.5
+	delay = 3.5
+	lines_gap = 1
 	background_opacity = 0.7
 	border_opacity = 0.5
 	state = IDLE
-	save = false
 	lines = []
+	changed = false
 
-	var v = get_script().get_path().get_base_dir() + CFG_FILE_NAME
-	var f = File.new()
-
-	if f.open(v, File.READ) == OK:
-
-		var d = {}
-
-		if d.parse_json(f.get_as_text()) == OK:
-
-			v = d.max_lines
-			if typeof(v) != TYPE_REAL: save = true # un entier donne également un float
-			else: max_lines = int(max(0, v))
-			v = d.from_root
-			if typeof(v) != TYPE_BOOL: save = true
-			else: from_root = v
-			v = d.hide_visible
-			if typeof(v) != TYPE_BOOL: save = true
-			else: hide_visible = v
-			v = d.hide_first_line
-			if typeof(v) != TYPE_BOOL: save = true
-			else: hide_first_line = v
-			v = d.updating_delay
-			if typeof(v) != TYPE_REAL: save = true
-			else: updating_delay = max(1.0, v)
-			v = d.activity_delay
-			if typeof(v) != TYPE_REAL: save = true
-			else: activity_delay = max(1.0, v)
-			v = d.background_opacity
-			if typeof(v) != TYPE_REAL: save = true
-			else: background_opacity = clamp(v, 0.0, 1.0)
-			v = d.border_opacity
-			if typeof(v) != TYPE_REAL: save = true
-			else: border_opacity = clamp(v, 0.0, 1.0)
-
-		else:
-
-			save = true
-
-	else:
-
-		save = true
-
-	f.close()
-	var s = get_editor_settings()
+	load_config()
 	box = Box.new(self, TOP_MARGIN)
 	box.set_v_size_flags(Control.SIZE_EXPAND_FILL)
 
@@ -507,45 +548,36 @@ func _enter_tree():
 	re.compile("^(?:\t| )*((func|static func|if|for|else|elif|while|class)(?: |:|\t)*.*)")
 
 	timer = Timer.new()
-	timer.set_wait_time(updating_delay)
-
-	editor_tabs.connect("tab_changed", self, "on_tab_changed")
+	timer.set_wait_time(delay)
 	timer.connect("timeout", self, "update")
-	box.connect("mouse_enter", self, "on_box_mouse_enter")
-	s.connect("settings_changed", self, "on_settings_changed")
+
+	connect_safely(editor_tabs, "tab_changed", "on_tab_changed")
+	connect_safely(box, "mouse_enter", CANCEL)
+	connect_safely(get_editor_settings(), "settings_changed", "on_settings_changed")
 
 	find_editor_script()
-	if editor_script != null: wait()
 
 #.............................................................................................................
 
 func _exit_tree():
 
-	show_box(false)
-	unregister_script() # appelle et remove_child(timer)
+	cancel()
+	unregister_script()
 
 	if timer != null:
 
-		timer.stop()
-		timer.disconnect("timeout", self, "update")
-		timer = null
+		disconnect_safely(timer, "timeout", "update")
+		timer.free()
 
 	if editor_tabs != null:
 
-		editor_tabs.disconnect("tab_changed", self, "on_tab_changed")
-		editor_tabs = null
+		disconnect_safely(editor_tabs, "tab_changed", "on_tab_changed")
 
 	if box != null:
 
-		box.disconnect("mouse_enter", self, "on_box_mouse_enter")
+		disconnect_safely(box, "mouse_enter", CANCEL)
 		box.free()
-		box = null
 
-	if lines != null:
+	if lines != null: lines.clear()
 
-		lines.clear()
-		lines = null
-
-	get_editor_settings().disconnect("settings_changed", self, "on_settings_changed")
-	re = null
-	default_font = null
+	disconnect_safely(get_editor_settings(), "settings_changed", "on_settings_changed")

@@ -3,8 +3,8 @@
 	"from_root":false,
 	"hide_visible":false,
 	"hide_first_line":true,
-	"updating_delay":6.5,
-	"activity_delay":3.5,
+	"delay":3.5,
+	"lines_gap":1,
 	"background_opacity":0.7,
 	"border_opacity":0.5
 }

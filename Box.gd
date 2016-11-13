@@ -7,7 +7,6 @@
 # append ..............	Ajoute une ligne
 # clear ...............	Supprime toutes les lignes
 # reload_settings .....	Recharge les paramètres de l'éditeur
-# set_digits ..........	Définit le nombre de chiffres des numéros de lignes
 # size ................	Récupére le nombre de lignes
 #
 #.............................................................................................................
@@ -19,16 +18,19 @@ extends Panel
 const _CAPACITY = 4
 const _HIGHLIGHTED_NUMBERED_LINE = "[color=#%s]%0*d[/color] %s[color=#%s]%s[/color]%s"
 const _HIGHLIGHTED_LINE = "%s[color=#%s]%s[/color]%s"
-const _NUMBERED_LINE = "%0*d %s%s%s"
-const _LINE = "%s%s%s"
+const _NUMBERED_LINE = "%0*d %s"
+const _TEXT_EDITOR = "text_editor/%s"
+const _NORMAL_FONT = "normal_font"
+const _DEFAULT_COLOR = "default_color"
 
 var _plugin # WeakRef<NestedCodeBox.gd>
 var _container # VBoxContainer
-var _lines # [Line]
-var _theme # Theme
-var _digits # int
+var _lines # [RichTextLabel]
+var _style_box # StyleBoxFlat
+var _font # Font
 var _line_number_color # String
 var _keyword_color # String
+var _text_color # Color
 var _syntax_highlighting # bool
 var _show_line_numbers # bool
 
@@ -38,23 +40,44 @@ var _show_line_numbers # bool
 
 func append(line, code, keyword_begin, keyword_end): # int, String, int, int
 
+	var n = _lines.size()
+	var s = code
+	var d = _plugin.get_ref().digits
+	var i = 0
 	var l
 
-	for i in _lines: # Line
-		if i.line < 0:
+	for i in _lines: # RichTextLabel
+
+		if i.get_parent() == null:
+
 			l = i
 			break
 
 	if l == null:
-		l = Line.new(_theme)
+
+		l = _create_line()
 		_lines.append(l)
 
-	l.line = line
-	l.code = code
-	l.begin = keyword_begin
-	l.end = keyword_end
-	_update_line(l)
-	_container.add_child(l.label) # la ligne n'est jamais déjà affichée
+	if _syntax_highlighting:
+
+		var k = code.substr(keyword_begin, keyword_end - keyword_begin) # mot-clef
+		var e = code.substr(keyword_end, code.length() - keyword_end) # fin de ligne
+		s = code.substr(0, keyword_begin) # indentation
+
+		if _show_line_numbers:
+
+			s = _HIGHLIGHTED_NUMBERED_LINE % [_line_number_color, d, line + 1, s, _keyword_color, k, e]
+
+		else:
+
+			s = _HIGHLIGHTED_LINE % [s, _keyword_color, k, e]
+
+	elif _show_line_numbers:
+
+		s = _NUMBERED_LINE % [d, line + 1, code]
+
+	l.set_bbcode(s)
+	_container.add_child(l) # la ligne n'est jamais déjà affichée
 
 #.............................................................................................................
 
@@ -62,10 +85,13 @@ func append(line, code, keyword_begin, keyword_end): # int, String, int, int
 
 func clear():
 
-	for i in _lines:
+	var j = 0
 
-		if i.label.get_parent() == _container: _container.remove_child(i.label)
-		i.line = -1
+	for i in _lines: # RichTextLabel
+
+		if i.get_parent() != null: _container.remove_child(i)
+		if j >= _CAPACITY: _free_line(i)
+		j += 1
 
 	_lines.resize(_CAPACITY)
 
@@ -73,63 +99,35 @@ func clear():
 
 # Recharge les paramètres de l'éditeur.
 
-func reload_settings(font, background_alpha, border_alpha):
+func reload_settings():
 
 	var s = _plugin.get_ref().get_editor_settings()
-	var g = "text_editor/%s"
-	_keyword_color = s.get(g % "keyword_color").to_html(false)
-	_line_number_color = s.get(g % "line_number_color").to_html(false)
-	_syntax_highlighting = s.get(g % "syntax_highlighting")
-	_show_line_numbers = s.get(g % "show_line_numbers")
+	_keyword_color = s.get(_TEXT_EDITOR % "keyword_color").to_html(false)
+	_line_number_color = s.get(_TEXT_EDITOR % "line_number_color").to_html(false)
+	_syntax_highlighting = s.get(_TEXT_EDITOR % "syntax_highlighting")
+	_show_line_numbers = s.get(_TEXT_EDITOR % "show_line_numbers")
 
-	_theme.set_font("normal_font", "RichTextLabel", font)
-	var b = _theme.get_stylebox("panel", "Panel")
-	var c = s.get(g % "background_color")
-	c.a = background_alpha
-	b.set_bg_color(c)
-	var c = s.get(g % "text_color")
-	_theme.set_color("default_color", "RichTextLabel", c)
-	c.a = border_alpha
-	b.set_light_color(c)
-	b.set_dark_color(c)
-	set_theme(_theme)
+	var f = s.get(_TEXT_EDITOR % "font")
+	if f.length() > 0: _font = load(f)
+	if _font == null: _font = _plugin.get_ref().default_font
 
-	for i in _lines:
+	var c = s.get(_TEXT_EDITOR % "background_color")
+	c.a = _plugin.get_ref().background_opacity
+	_style_box.set_bg_color(c)
 
-		i.label.set_theme(_theme)
-		_update_line(i)
+	_text_color = s.get(_TEXT_EDITOR % "text_color")
+	c = _text_color
+	c.a = _plugin.get_ref().border_opacity
+	_style_box.set_light_color(c)
+	_style_box.set_dark_color(c)
 
-#.........................................................................................................
-
-# Définit le nombre de chiffres des numéros de lignes
-
-func set_digits(value): # int
-
-	if value == _digits: return
-	_digits = value
-	for i in _lines: _update_line(i)
-
-#.............................................................................................................
-
-func set_font(font): # Font
-
-	_theme.set_font("normal_font", "RichTextLabel", font)
-	for i in _lines: _update_line(i)
+	for i in range(_CAPACITY): _set_line(_lines[i])
 
 #.............................................................................................................
 
 # Récupére le nombre de lignes.
 
-func size(): # : int
-
-	var n = 0
-
-	for i in range(_lines.size() - 1, -1, -1):
-
-		if _lines[i].line < 0: continue
-		n += 1
-
-	return n
+func size(): return _container.get_child_count()
 
 #.............................................................................................................
 
@@ -139,10 +137,10 @@ func trace():
 
 	for i in _lines:
 
-		if i.line < 0: break
+		if i.get_parent() == null: break
 		if s != null: s += "\n"
 		else: s = ""
-		s += str(i.line + 1) + " " + i.code
+		s += i.get_text()
 
 	if s == null: print("empty")
 	else: print(s)
@@ -155,52 +153,49 @@ func trace():
 
 # Redimensionnement de l'occurrence.
 
-func _on_resized():
-
-	_container.set_size(get_size())
+func _on_resized(): _container.set_size(get_size())
 
 #.............................................................................................................
 
-# Actualise le format d'une ligne.
+func _free_line(l): # RichTextLabel
 
-func _update_line(l):
+	l.add_font_override(_NORMAL_FONT, null)
+	l.add_color_override(_DEFAULT_COLOR, null)
+	l.free()
 
-	if l.line < 0: return
+#.............................................................................................................
 
-	var s = l.code.substr(0, l.begin) # indentation
-	var k = l.code.substr(l.begin, l.end - l.begin) # mot-clef
-	var e = l.code.substr(l.end, l.code.length() - l.end) # fin de ligne
+func _create_line(): # : RichTextLabel
 
-	if _syntax_highlighting:
+	var l = RichTextLabel.new()
+	l.set_use_bbcode(true)
+	l.set_selection_enabled(false)
+	l.set_scroll_active(false)
+	l.set_v_size_flags(Control.SIZE_EXPAND_FILL)
+	l.set_ignore_mouse(true)
+	return _set_line(l)
 
-		if _show_line_numbers:
+#.............................................................................................................
 
-			s = _HIGHLIGHTED_NUMBERED_LINE % [_line_number_color, _digits, l.line, s, _keyword_color, k, e]
+func _set_line(l): # RichTextLabel : RichTextLabel
 
-		else:
-
-			s = _HIGHLIGHTED_LINE % [s, _keyword_color, k, e]
-
-	elif _show_line_numbers:
-
-		s = _NUMBERED_LINE % [_digits, l.line, s, k, e]
-
-	else:
-
-		s = _LINE % [s, k, e]
-
-	l.label.set_bbcode(s)
+	if _font != null: l.add_font_override(_NORMAL_FONT, _font)
+	if _text_color != null: l.add_color_override(_DEFAULT_COLOR, _text_color)
+	return l
 
 #.. Object ...................................................................................................
 
 func free():
 
-	clear()
-	_plugin = null
+	add_style_override("panel", null)
+	_plugin.free()
+	_container.add_constant_override("separation", Theme.INVALID_CONSTANT)
+
+	for i in _lines: _free_line(i)
 	_lines.clear()
-	_lines = null
-	_theme = null
-	_container = null
+
+	if is_connected("resized", self, "_on_resized"): disconnect("resized", self, "_on_resized")
+	.free()
 
 #.............................................................................................................
 
@@ -208,49 +203,18 @@ func _init(plugin, top_margin): # NestedCodeBox.gd, int
 
 	_plugin = weakref(plugin)
 
-	_theme = Theme.new()
-	_theme.set_constant("separation", "VBoxContainer", 1)
-
-	var b = StyleBoxFlat.new()
-	b.set_border_size(1)
-	_theme.set_stylebox("panel", "Panel", b)
-	set_theme(_theme)
+	_style_box = StyleBoxFlat.new()
+	_style_box.set_border_size(1)
+	add_style_override("panel", _style_box)
 
 	_container = VBoxContainer.new()
 	_container.set_ignore_mouse(true)
 	_container.set_margin(MARGIN_TOP, top_margin)
 	_container.set_margin(MARGIN_LEFT, 14)
-	_container.set_theme(_theme)
+	_container.add_constant_override("separation", 1)
 	add_child(_container)
-	_digits = 1
 	_lines = []
 
-	for i in range(_CAPACITY): _lines.append(Line.new(_theme))
-	self.connect("resized", self, "_on_resized")
+	for i in range(_CAPACITY): _lines.append(_create_line())
 
-#.............................................................................................................
-
-class Line:
-
-	#.........................................................................................................
-
-	var line
-	var code
-	var label
-	var begin
-	var end
-
-	#.........................................................................................................
-
-	func _init(theme):
-
-		line = -1
-		code = ""
-		begin = 0
-		end = 0
-		label = RichTextLabel.new()
-		label.set_use_bbcode(true)
-		label.set_selection_enabled(false)
-		label.set_v_size_flags(Control.SIZE_EXPAND_FILL)
-		label.set_theme(theme)
-		label.set_ignore_mouse(true)
+	connect("resized", self, "_on_resized")
