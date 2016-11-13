@@ -22,5 +22,5 @@ cfg.json:
 * *from_root* : The first line is the less indented block but some intercalated blocks can be absents
 * *hide_visible* : Allow the box to hide a parent block (taken back in the box), the number of lines is often bigger
 * *hide_first_line* : Override 'hide_visible=false' for the first line, and the following if the blocks are close
-* *delay* : Time in seconds before to show the box. The display is delayed each time something happens in the text editor
+* *delay* : Time in seconds before to show the box. The display is canceled each time something happens in the text editor
 * *lines_gap* : Minimal number of lines between the current line and the box
