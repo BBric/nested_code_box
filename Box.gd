@@ -187,8 +187,8 @@ func _set_line(l): # RichTextLabel : RichTextLabel
 
 func free():
 
-	add_style_override("panel", null)
 	_plugin.free()
+	add_style_override("panel", null)
 	_container.add_constant_override("separation", Theme.INVALID_CONSTANT)
 
 	for i in _lines: _free_line(i)

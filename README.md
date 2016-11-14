@@ -1,5 +1,5 @@
 # nested_code_box
-A plugin for the [Godot game engine](https://github.com/godotengine/godot). 
+A plugin for the [Godot game engine](https://github.com/godotengine/godot) [2.1].
 It display the hidden start blocks in a frame at the top of the script editor.
 
 ![overview](overview.png)
@@ -23,4 +23,4 @@ cfg.json:
 * *hide_visible* : Allow the box to hide a parent block (taken back in the box), the number of lines is often bigger
 * *hide_first_line* : Override 'hide_visible=false' for the first line, and the following if the blocks are close
 * *delay* : Time in seconds before to show the box. The display is canceled each time something happens in the text editor
-* *lines_gap* : Minimal number of lines between the current line and the box
+* *lines_gap* : Minimal number of lines between the current line and the box (0 to 3)

@@ -8,17 +8,22 @@ const CODE_TEXT_EDITOR = "CodeTextEditor"
 const TEXT_EDIT = "TextEdit"
 const V_SCROLL_BAR = "VScrollBar"
 const H_SCROLL_BAR = "HScrollBar"
+
+const CURSOR_CHANGED = "cursor_changed"
+const EXIT_TREE = "exit_tree"
+const RESIZED = "resized"
+const TEXT_CHANGED = "text_changed"
+const VALUE_CHANGED = "value_changed"
+
+const CANCEL = "cancel"
+const ON_CURSOR_CHANGED = "on_cursor_changed"
+const ON_RESIZED = "on_resized"
+const ON_SCROLL = "on_scroll"
+const ON_SCRIPT_EXIT_TREE = "on_script_exit_tree"
+const ON_TEXT_CHANGED = "on_text_changed"
+
 const CFG_FILE_NAME = "/cfg.json"
 const TOP_MARGIN = 2
-const TEXT_CHANGED = "text_changed"
-const ON_TEXT_CHANGED = "on_text_changed"
-const CURSOR_CHANGED = "cursor_changed"
-const ON_CURSOR_CHANGED = "on_cursor_changed"
-const RESIZED = "resized"
-const ON_RESIZED = "on_resized"
-const VALUE_CHANGED = "value_changed"
-const ON_SCROLL = "on_scroll"
-const CANCEL = "cancel"
 
 const IDLE = 0
 const UPDATE = 1
@@ -45,7 +50,7 @@ var digits # int
 var lines # Array
 var index # int
 var changed # bool
-var width # int
+var size # Vector2
 
 #.............................................................................................................
 
@@ -63,6 +68,7 @@ func update():
 
 	state = IDLE
 	box.clear()
+
 	var f = editor_vscrollbar.get_value() # première ligne visible
 	if f == 0 or editor_vscrollbar.get_page() == 0: return
 
@@ -147,8 +153,8 @@ func update():
 			box.append(d[0], d[1], d[2], d[2] + d[3])
 			i += 1
 
-	var h = editor_script.get_size().height / editor_vscrollbar.get_page() * box.size() + TOP_MARGIN
-	box.set_size(Vector2(width, h))
+	size.height = editor_script.get_size().height / editor_vscrollbar.get_page() * box.size() + TOP_MARGIN
+	box.set_size(size)
 	add_safely(editor_script, box)
 
 #.............................................................................................................
@@ -244,12 +250,15 @@ func on_cursor_changed():
 
 	cancel()
 
-	if editor_script.cursor_get_column() == 0: return
+	if editor_script.cursor_get_column() == 0: return # évite un affichage trop fréquent sur une ligne vide
 
 	var t = editor_script.get_line(editor_script.cursor_get_line())
 	var n = t.length()
 	var c = t.ord_at(0)
 	var i = 1
+
+	# une suite de caractères qui n'est pas une indentation lance update() mais la box n'est pas
+	# affichée à cause de l'indentation qui est 0, donc il est facultatif de contrôler le caractère ici
 
 	while i < n:
 
@@ -272,13 +281,31 @@ func on_cursor_changed():
 func on_resized():
 
 	cancel()
-	if editor_script != null: width = editor_script.get_size().width - editor_vscrollbar.get_size().width
+	if editor_script != null: size.width = editor_script.get_size().width - editor_vscrollbar.get_size().width
 
 #.............................................................................................................
 
 func on_settings_changed():
 
 	if box != null: box.reload_settings()
+
+#.............................................................................................................
+
+# Fermeture d'un script.
+#
+# Lorsqu'un script est fermé et que la boîte est affichée dans ce script l'accès à une méthode de box ferme
+# directement Godot. Cet écouteur est appelé avant on_tab_changed() et permet d'éviter ce problème.
+# Le même écouteur sur box ferme aussi Godot mais affiche un message qui conseille d'appeler
+# call_deferred("remove_child", child) car le parent est indisponible.
+
+func on_script_exit_tree():
+
+	cancel()
+	unregister_script()
+
+#.............................................................................................................
+
+func on_scroll(value): cancel()
 
 #.............................................................................................................
 
@@ -298,9 +325,7 @@ func on_text_changed():
 
 #.............................................................................................................
 
-func on_scroll(value): cancel()
-
-#.............................................................................................................
+# Arrête le timer, masque la boîte et revient au repos.
 
 func cancel():
 
@@ -314,7 +339,7 @@ func unregister_script():
 
 	if editor_script != null:
 
-		remove_safely(editor_script, timer)
+		disconnect_safely(editor_script, EXIT_TREE, ON_SCRIPT_EXIT_TREE)
 		disconnect_safely(editor_script, TEXT_CHANGED, ON_TEXT_CHANGED)
 		disconnect_safely(editor_script, CURSOR_CHANGED, ON_CURSOR_CHANGED)
 		disconnect_safely(editor_script, RESIZED, ON_RESIZED)
@@ -339,6 +364,7 @@ func find_editor_script():
 	unregister_script()
 	var t = editor_tabs.get_current_tab_control()
 	if t == null: return
+	var h; var v
 
 	for i in t.get_children():
 
@@ -352,29 +378,31 @@ func find_editor_script():
 
 						if k.get_type() == V_SCROLL_BAR:
 
-							editor_vscrollbar = k
-							if editor_hscrollbar != null: break
+							v = k
+							if h != null: break
 
 						if k.get_type() == H_SCROLL_BAR:
 
-							editor_hscrollbar = k
-							if editor_vscrollbar != null: break
+							h = k
+							if v != null: break
 
-					if editor_vscrollbar != null and editor_hscrollbar != null:
+					if v != null and h != null:
 
 						editor_script = j
+						editor_vscrollbar = v
+						editor_hscrollbar = h
 
 						if default_font == null:
 							default_font = j.get("custom_fonts/font")
 							on_settings_changed()
 
+						connect_safely(j, EXIT_TREE, ON_SCRIPT_EXIT_TREE)
 						connect_safely(j, TEXT_CHANGED, ON_TEXT_CHANGED)
 						connect_safely(j, CURSOR_CHANGED, ON_CURSOR_CHANGED)
 						connect_safely(j, RESIZED, ON_RESIZED)
-						connect_safely(editor_vscrollbar, VALUE_CHANGED, ON_SCROLL)
-						connect_safely(editor_hscrollbar, VALUE_CHANGED, ON_SCROLL)
-						width = j.get_size().width - editor_vscrollbar.get_size().width
-						add_safely(j, timer)
+						connect_safely(v, VALUE_CHANGED, ON_SCROLL)
+						connect_safely(h, VALUE_CHANGED, ON_SCROLL)
+						size.width = j.get_size().width - v.get_size().width
 
 					return
 
@@ -413,8 +441,8 @@ func add_safely(parent, child):
 
 	var p = child.get_parent()
 	if p == parent: return
-
 	if p != null: p.remove_child(child) # ERROR: add_child: Can't add child, already has a parent
+
 	parent.add_child(child)
 
 #.............................................................................................................
@@ -536,6 +564,7 @@ func _enter_tree():
 	state = IDLE
 	lines = []
 	changed = false
+	size = Vector2(0, 0)
 
 	load_config()
 	box = Box.new(self, TOP_MARGIN)
@@ -550,10 +579,11 @@ func _enter_tree():
 	timer = Timer.new()
 	timer.set_wait_time(delay)
 	timer.connect("timeout", self, "update")
+	add_safely(get_base_control(), timer)
 
 	connect_safely(editor_tabs, "tab_changed", "on_tab_changed")
-	connect_safely(box, "mouse_enter", CANCEL)
 	connect_safely(get_editor_settings(), "settings_changed", "on_settings_changed")
+	connect_safely(box, "mouse_enter", CANCEL)
 
 	find_editor_script()
 
@@ -566,12 +596,14 @@ func _exit_tree():
 
 	if timer != null:
 
+		remove_safely(get_base_control(), timer)
 		disconnect_safely(timer, "timeout", "update")
 		timer.free()
 
 	if editor_tabs != null:
 
 		disconnect_safely(editor_tabs, "tab_changed", "on_tab_changed")
+		editor_tabs = null
 
 	if box != null:
 
