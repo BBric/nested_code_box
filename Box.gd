@@ -211,7 +211,7 @@ func _init(plugin, top_margin): # NestedCodeBox.gd, int
 	_container.set_ignore_mouse(true)
 	_container.set_margin(MARGIN_TOP, top_margin)
 	_container.set_margin(MARGIN_LEFT, 14)
-	_container.add_constant_override("separation", 1)
+	_container.add_constant_override("separation", 0) # 4 par défaut
 	add_child(_container)
 	_lines = []
 

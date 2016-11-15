@@ -250,7 +250,9 @@ func on_cursor_changed():
 
 	cancel()
 
-	if editor_script.cursor_get_column() == 0: return # évite un affichage trop fréquent sur une ligne vide
+	# column == 0 évite un affichage trop fréquent sur une ligne vide
+	# le défilement horizontal peut être de 1 alors que la barre n'est pas visible
+	if editor_script.cursor_get_column() == 0 or editor_hscrollbar.get_value() > 1: return
 
 	var t = editor_script.get_line(editor_script.cursor_get_line())
 	var n = t.length()
@@ -467,13 +469,14 @@ func disconnect_safely(target, name, function): # Object, String, String
 
 func load_config():
 
-	var v = get_script().get_path().get_base_dir() + CFG_FILE_NAME
+	var s = get_script().get_path().get_base_dir() + CFG_FILE_NAME
 	var f = File.new()
 	var r = false # enregistrer les paramètres
 
-	if f.open(v, File.READ) == OK:
+	if f.open(s, File.READ) == OK:
 
 		var d = {}
+		var v
 
 		if d.parse_json(f.get_as_text()) == OK:
 
@@ -495,7 +498,7 @@ func load_config():
 
 			v = d.delay
 			if typeof(v) != TYPE_REAL: r = true
-			else: delay = max(1.0, v)
+			else: delay = max(0.0, v)
 
 			v = d.lines_gap
 			if typeof(v) != TYPE_REAL: r = true
@@ -521,7 +524,7 @@ func load_config():
 
 	if not r: return
 
-	if f.open(v, File.WRITE) == OK:
+	if f.open(s, File.WRITE) == OK:
 
 		var p = "\n\t\"%s\":%s"
 		var c = "{%s,%s,%s,%s,%s,%s,%s,%s\n}"
