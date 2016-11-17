@@ -90,7 +90,7 @@ func clear():
 	for i in _lines: # RichTextLabel
 
 		if i.get_parent() != null: _container.remove_child(i)
-		if j >= _CAPACITY: _free_line(i)
+		if j >= _CAPACITY: i.free()
 		j += 1
 
 	_lines.resize(_CAPACITY)
@@ -157,14 +157,6 @@ func _on_resized(): _container.set_size(get_size())
 
 #.............................................................................................................
 
-func _free_line(l): # RichTextLabel
-
-	l.add_font_override(_NORMAL_FONT, null)
-	l.add_color_override(_DEFAULT_COLOR, null)
-	l.free()
-
-#.............................................................................................................
-
 func _create_line(): # : RichTextLabel
 
 	var l = RichTextLabel.new()
@@ -188,12 +180,8 @@ func _set_line(l): # RichTextLabel : RichTextLabel
 func free():
 
 	_plugin.free()
-	add_style_override("panel", null)
-	_container.add_constant_override("separation", Theme.INVALID_CONSTANT)
-
-	for i in _lines: _free_line(i)
+	for i in _lines: i.free()
 	_lines.clear()
-
 	if is_connected("resized", self, "_on_resized"): disconnect("resized", self, "_on_resized")
 	.free()
 

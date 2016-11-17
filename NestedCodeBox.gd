@@ -21,13 +21,7 @@ const ON_RESIZED = "on_resized"
 const ON_SCROLL = "on_scroll"
 const ON_SCRIPT_EXIT_TREE = "on_script_exit_tree"
 const ON_TEXT_CHANGED = "on_text_changed"
-
-const CFG_FILE_NAME = "/cfg.json"
 const TOP_MARGIN = 2
-
-const IDLE = 0
-const UPDATE = 1
-const PENDING = 2
 
 var editor_tabs # TabContainer
 var editor_script # TextEdit
@@ -36,7 +30,7 @@ var editor_hscrollbar # HScrollBar
 var box # Box.gd
 var re # RegEx
 var timer # Timer
-var state # int
+var idle # bool
 var default_font # Font
 var delay # float
 var max_lines # int
@@ -58,15 +52,6 @@ var size # Vector2
 
 func update():
 
-	if state == PENDING:
-		state = UPDATE
-		return
-
-	if timer != null: timer.stop()
-
-	if state != UPDATE: return
-
-	state = IDLE
 	box.clear()
 
 	var f = editor_vscrollbar.get_value() # première ligne visible
@@ -118,36 +103,41 @@ func update():
 
 	else: # multiligne
 
-		var n # nombre de lignes affichées
+		var n # indice de fin
 
-		if index > 0: n = index
-		else: n = s
-		i = n # première ligne visible
+		if index < 0:
 
-		while i < s: # étape 1 : inclure les lignes visibles cachées par le cadre
+			i = 0 # indice de départ
+			n = s
 
-			if lines[i][0] > f + n - 1: break
-			n += 1
-			i += 1
+			if n > m:
 
-		i = 0 # indice de départ
+				if from_root: n = m
+				else: i = n - m
 
-		if n > m:
+		else:
 
-			if from_root:
+			n = get_lines_number(index)
+			i = 0
 
-				n = m # indice de fin
+			if n > m:
 
-			else:
+				if from_root:
 
-				i = n - m
+					n = m
 
-				if index > 0 and i >= index:
+				else:
 
-					i = index - 1 # minimum 1 bloc hors champ
-					n = i + m # indice de fin
+					while i < index - 1: # minimum 1 ligne hors champ
 
-		while i < n: # étape 2 : lignes affichées
+						n = get_lines_number(index - i)
+						if n <= m: break
+						i += 1
+
+					if n > m: n = i + m
+					else: n = i + n
+
+		while i < n: # lignes affichées
 
 			d = lines[i]
 			box.append(d[0], d[1], d[2], d[2] + d[3])
@@ -156,45 +146,25 @@ func update():
 	size.height = editor_script.get_size().height / editor_vscrollbar.get_page() * box.size() + TOP_MARGIN
 	box.set_size(size)
 	add_safely(editor_script, box)
+	idle = false
 
 #.............................................................................................................
 
-# Récupére l'indentation de la ligne non vide suivante la plus proche.
-# Une ligne qui ne contient que des caractères blancs n'est pas considérée vide.
-# Si aucune ligne n'est trouvée la méthode renvoie 0.
-#
-# i		Indice de départ inclus
+# Récupére le nombre de lignes à afficher à partir d'un nombre de lignes initial en incluant les lignes
+# cachées par ce nombre de lignes (index supposé > 0).
 
-func get_next_indent(i): # int : int
+func get_lines_number(n): # int : int
 
-	var m = editor_script.get_line_count()
-	var t
+	var f = editor_vscrollbar.get_value()
+	var i = index
 
-	while i < m:
+	while i < lines.size():
 
-		t = editor_script.get_line(i)
-
-		if t.length() > 0:
-
-			var c = t.ord_at(0)
-			var n = 0
-
-			if c == 9 or c == 32: # tabulation ou espace
-
-				var j = 1
-				n = 1
-
-				while j < t.length():
-
-					if t.ord_at(j) == c: n += 1
-					else: break
-					j += 1
-
-			return n
-
+		if lines[i][0] > f + n - 1: return n
+		n += 1
 		i += 1
 
-	return 0
+	return n
 
 #.............................................................................................................
 
@@ -206,13 +176,28 @@ func find_all_lines(i):
 
 	lines.clear() # lignes sous la forme [numéro, code complet, indice du mot-clef, longueur du mot-clef]
 	index = -1 # première ligne visible dans lines
-	var r = get_next_indent(i) # indentation du bloc racine
+	var t = editor_script.get_line(i)
+	var r = 0 # indentation du bloc racine
+	var n = t.length()
+
+	if n > 0:
+
+		var c = t.ord_at(0)
+
+		if c == 9 or c == 32: # tabulation ou espace
+
+			var j = 1
+			r = 1
+
+			while j < n:
+
+				if t.ord_at(j) == c: r += 1
+				else: break
+				j += 1
 
 	if r == 0: return # curseur hors bloc
 
 	var f = editor_vscrollbar.get_value()
-	var n # indentation
-	var t # code
 	i -= 1
 
 	while i > -1:
@@ -221,7 +206,7 @@ func find_all_lines(i):
 
 		if re.find(t) > -1: # bloc
 
-			n = t.length() - re.get_capture(1).length()
+			n = t.length() - re.get_capture(1).length() # indentation
 
 			if n < r: # bloc parent
 
@@ -241,7 +226,7 @@ func find_all_lines(i):
 
 func on_cursor_changed():
 
-	if changed == true: # déplacement par édition (après on_text_changed)
+	if changed: # déplacement par édition (après on_text_changed)
 
 		changed = false
 		return
@@ -251,11 +236,13 @@ func on_cursor_changed():
 	cancel()
 
 	# column == 0 évite un affichage trop fréquent sur une ligne vide
-	# le défilement horizontal peut être de 1 alors que la barre n'est pas visible
-	if editor_script.cursor_get_column() == 0 or editor_hscrollbar.get_value() > 1: return
+	# le défilement horizontal peut être 1+ alors que la barre n'est pas visible [2.1]
+	# une unité H ne correspond pas à 1 caractère, le désalignement se voit un peu plus à partir de 3
+	if editor_script.cursor_get_column() == 0 or (not editor_hscrollbar.is_hidden() and\
+	   editor_hscrollbar.get_value() > 2): return
 
 	var t = editor_script.get_line(editor_script.cursor_get_line())
-	var n = t.length()
+	var n = t.length() # > 0
 	var c = t.ord_at(0)
 	var i = 1
 
@@ -269,14 +256,8 @@ func on_cursor_changed():
 
 	if i != editor_script.cursor_get_column(): return
 
-	if state == IDLE:
-
-		state = UPDATE
-		timer.start()
-
-	elif state == UPDATE:
-
-		state = PENDING
+	if delay > 0: timer.start()
+	else: update() # le passage par timer donne un délai de mini 1s [2.1]
 
 #.............................................................................................................
 
@@ -296,7 +277,7 @@ func on_settings_changed():
 # Fermeture d'un script.
 #
 # Lorsqu'un script est fermé et que la boîte est affichée dans ce script l'accès à une méthode de box ferme
-# directement Godot. Cet écouteur est appelé avant on_tab_changed() et permet d'éviter ce problème.
+# directement Godot [2.1]. Cet écouteur est appelé avant on_tab_changed() et permet d'éviter ce problème.
 # Le même écouteur sur box ferme aussi Godot mais affiche un message qui conseille d'appeler
 # call_deferred("remove_child", child) car le parent est indisponible.
 
@@ -331,9 +312,11 @@ func on_text_changed():
 
 func cancel():
 
+	if idle: return
+
 	if timer != null: timer.stop()
 	if box != null and box.get_parent() != null: box.get_parent().remove_child(box)
-	state = IDLE
+	idle = true
 
 #.............................................................................................................
 
@@ -443,15 +426,15 @@ func add_safely(parent, child):
 
 	var p = child.get_parent()
 	if p == parent: return
-	if p != null: p.remove_child(child) # ERROR: add_child: Can't add child, already has a parent
+	if p != null: p.remove_child(child) # ERROR: add_child: Can't add child, already has a parent [2.1]
 
 	parent.add_child(child)
 
 #.............................................................................................................
 
-func remove_safely(parent, child):
+func remove_safely(child):
 
-	if parent != null and child != null and child.get_parent() == parent: parent.remove_child(child)
+	if child != null and child.get_parent() != null: child.get_parent().remove_child(child)
 
 #.............................................................................................................
 
@@ -469,7 +452,7 @@ func disconnect_safely(target, name, function): # Object, String, String
 
 func load_config():
 
-	var s = get_script().get_path().get_base_dir() + CFG_FILE_NAME
+	var s = get_script().get_path().get_base_dir() + "/cfg.json"
 	var f = File.new()
 	var r = false # enregistrer les paramètres
 
@@ -564,7 +547,7 @@ func _enter_tree():
 	lines_gap = 1
 	background_opacity = 0.7
 	border_opacity = 0.5
-	state = IDLE
+	idle = true
 	lines = []
 	changed = false
 	size = Vector2(0, 0)
@@ -574,13 +557,14 @@ func _enter_tree():
 	box.set_v_size_flags(Control.SIZE_EXPAND_FILL)
 
 	# 0: tout, 1: code, 2: mot clef
-	# (\t| )* a toujours une longueur maximale de 1 caractère quelque soit le nombre de caractères,
+	# (\t| )* a toujours une longueur maximale de 1 caractère quelque soit le nombre de caractères [2.1],
 	# donc indentation = longueur de 0 - longueur de 1
 	re = RegEx.new()
 	re.compile("^(?:\t| )*((func|static func|if|for|else|elif|while|class)(?: |:|\t)*.*)")
 
 	timer = Timer.new()
-	timer.set_wait_time(delay)
+	timer.set_wait_time(delay) # mini 1s [2.1]
+	timer.set_one_shot(true)
 	timer.connect("timeout", self, "update")
 	add_safely(get_base_control(), timer)
 
@@ -599,7 +583,7 @@ func _exit_tree():
 
 	if timer != null:
 
-		remove_safely(get_base_control(), timer)
+		remove_safely(timer)
 		disconnect_safely(timer, "timeout", "update")
 		timer.free()
 
