@@ -15,13 +15,11 @@ const RESIZED = "resized"
 const TEXT_CHANGED = "text_changed"
 const VALUE_CHANGED = "value_changed"
 
-const CANCEL = "cancel"
 const ON_CURSOR_CHANGED = "on_cursor_changed"
 const ON_RESIZED = "on_resized"
 const ON_SCROLL = "on_scroll"
 const ON_SCRIPT_EXIT_TREE = "on_script_exit_tree"
 const ON_TEXT_CHANGED = "on_text_changed"
-const TOP_MARGIN = 2
 
 var editor_tabs # TabContainer
 var editor_script # TextEdit
@@ -37,14 +35,19 @@ var max_lines # int
 var from_root # bool
 var hide_visible # bool
 var hide_first_line # bool
+var enable_targetting # bool
+var ignore_echo # bool
 var lines_gap # int
+var lines_margin # int
 var background_opacity # float
 var border_opacity # float
+var button_opacity # float
 var digits # int
 var lines # Array
 var index # int
 var changed # bool
 var size # Vector2
+var last # int
 
 #.............................................................................................................
 
@@ -91,6 +94,8 @@ func update():
 		else:
 
 			m = min(i - f, m)
+
+	last = l
 
 	if m == 1: # ligne unique
 
@@ -143,7 +148,7 @@ func update():
 			box.append(d[0], d[1], d[2], d[2] + d[3])
 			i += 1
 
-	size.height = editor_script.get_size().height / editor_vscrollbar.get_page() * box.size() + TOP_MARGIN
+	size.height = box.compute_height()
 	box.set_size(size)
 	add_safely(editor_script, box)
 	idle = false
@@ -222,24 +227,27 @@ func find_all_lines(i):
 
 #.............................................................................................................
 
-# Déplacement du caret.
+# Déplacement du caret. Appelée automatiquement au démarrage à la colonne 0.
 
 func on_cursor_changed():
 
 	if changed: # déplacement par édition (après on_text_changed)
 
 		changed = false
-		return
+		if last > -1: return # on_text_changed() est appelée au démarrage ce qui annule le 1er clic
 
 	# déplacement par clic
 
 	cancel()
+	var l = editor_script.cursor_get_line()
 
 	# column == 0 évite un affichage trop fréquent sur une ligne vide
 	# le défilement horizontal peut être 1+ alors que la barre n'est pas visible [2.1]
 	# une unité H ne correspond pas à 1 caractère, le désalignement se voit un peu plus à partir de 3
-	if editor_script.cursor_get_column() == 0 or (not editor_hscrollbar.is_hidden() and\
-	   editor_hscrollbar.get_value() > 2): return
+	if editor_script.cursor_get_column() == 0 or (ignore_echo and l == last) or\
+	   (not editor_hscrollbar.is_hidden() and editor_hscrollbar.get_value() > 2): return
+
+	if l != last: last = 0 # réinitialise la dernière ligne
 
 	var t = editor_script.get_line(editor_script.cursor_get_line())
 	var n = t.length() # > 0
@@ -261,6 +269,17 @@ func on_cursor_changed():
 
 #.............................................................................................................
 
+func on_line_clicked(line): # int
+
+	cancel()
+	editor_script.grab_focus()
+	var m = max(0, line - editor_vscrollbar.get_page() + 1)
+	editor_script.cursor_set_line(max(m, line - lines_margin), true)
+	editor_script.cursor_set_line(line)
+	editor_script.cursor_set_column(editor_script.get_line(line).length())
+
+#.............................................................................................................
+
 func on_resized():
 
 	cancel()
@@ -268,9 +287,19 @@ func on_resized():
 
 #.............................................................................................................
 
+# Modification des paramètres de l'éditeur.
+# Appelée sans appel explicite au démarrage uniquement si le plugin est activé.
+
 func on_settings_changed():
 
 	if box != null: box.reload_settings()
+
+#.............................................................................................................
+
+func on_mouse_over():
+
+	if not enable_targetting: cancel()
+	elif not is_processing(): set_process(true)
 
 #.............................................................................................................
 
@@ -314,6 +343,7 @@ func cancel():
 
 	if idle: return
 
+	set_process(false)
 	if timer != null: timer.stop()
 	if box != null and box.get_parent() != null: box.get_parent().remove_child(box)
 	idle = true
@@ -377,9 +407,7 @@ func find_editor_script():
 						editor_vscrollbar = v
 						editor_hscrollbar = h
 
-						if default_font == null:
-							default_font = j.get("custom_fonts/font")
-							on_settings_changed()
+						if default_font == null: default_font = j.get("custom_fonts/font")
 
 						connect_safely(j, EXIT_TREE, ON_SCRIPT_EXIT_TREE)
 						connect_safely(j, TEXT_CHANGED, ON_TEXT_CHANGED)
@@ -479,6 +507,14 @@ func load_config():
 			if typeof(v) != TYPE_BOOL: r = true
 			else: hide_first_line = v
 
+			v = d.enable_targetting
+			if typeof(v) != TYPE_BOOL: r = true
+			else: enable_targetting = v
+
+			v = d.ignore_echo
+			if typeof(v) != TYPE_BOOL: r = true
+			else: ignore_echo = v
+
 			v = d.delay
 			if typeof(v) != TYPE_REAL: r = true
 			else: delay = max(0.0, v)
@@ -487,6 +523,10 @@ func load_config():
 			if typeof(v) != TYPE_REAL: r = true
 			else: lines_gap = int(clamp(v, 0, 3))
 
+			v = d.lines_margin
+			if typeof(v) != TYPE_REAL: r = true
+			else: lines_margin = int(clamp(v, 0, 10))
+
 			v = d.background_opacity
 			if typeof(v) != TYPE_REAL: r = true
 			else: background_opacity = clamp(v, 0.0, 1.0)
@@ -494,6 +534,10 @@ func load_config():
 			v = d.border_opacity
 			if typeof(v) != TYPE_REAL: r = true
 			else: border_opacity = clamp(v, 0.0, 1.0)
+
+			v = d.button_opacity
+			if typeof(v) != TYPE_REAL: r = true
+			else: button_opacity = clamp(v, 0.0, 1.0)
 
 		else:
 
@@ -514,14 +558,25 @@ func load_config():
 		f.store_string(c % [p % ["max_lines", max_lines], p % ["from_root", str(from_root).to_lower()],\
 							p % ["hide_visible", str(hide_visible).to_lower()],\
 							p % ["hide_first_line", str(hide_first_line).to_lower()],\
+							p % ["enable_targetting", str(enable_targetting).to_lower()],\
+							p % ["ignore_echo", str(ignore_echo).to_lower()],\
 							p % ["delay", delay],\
-							p % ["lines_gap", lines_gap],\
+							p % ["lines_gap", lines_gap], p % ["lines_margin", lines_margin],\
 							p % ["background_opacity", background_opacity],\
-							p % ["border_opacity", border_opacity]])
+							p % ["border_opacity", border_opacity],\
+							p % ["button_opacity", button_opacity]])
 
 	f.close()
 
 #.. Node .....................................................................................................
+
+func _process(delta):
+
+	var r = box.get_global_rect() # Rect2::has_point() exclus les limites {2.1]
+	var p = box.get_global_mouse_pos()
+	if p.x < r.pos.x or p.y < r.pos.y or p.x > r.end.x or p.y > r.end.y: cancel()
+
+#.............................................................................................................
 
 func _enter_tree():
 
@@ -543,18 +598,22 @@ func _enter_tree():
 	from_root = false
 	hide_visible = false
 	hide_first_line = true
+	enable_targetting = true
+	ignore_echo = false
 	delay = 3.5
 	lines_gap = 1
+	lines_margin = 2
 	background_opacity = 0.7
 	border_opacity = 0.5
+	button_opacity = 0.05
 	idle = true
-	lines = []
 	changed = false
+	lines = []
 	size = Vector2(0, 0)
+	last = -1 # -1: non initialisée, 0: aucune valeur
 
 	load_config()
-	box = Box.new(self, TOP_MARGIN)
-	box.set_v_size_flags(Control.SIZE_EXPAND_FILL)
+	box = Box.new(self)
 
 	# 0: tout, 1: code, 2: mot clef
 	# (\t| )* a toujours une longueur maximale de 1 caractère quelque soit le nombre de caractères [2.1],
@@ -570,9 +629,11 @@ func _enter_tree():
 
 	connect_safely(editor_tabs, "tab_changed", "on_tab_changed")
 	connect_safely(get_editor_settings(), "settings_changed", "on_settings_changed")
-	connect_safely(box, "mouse_enter", CANCEL)
+	connect_safely(box, "mouse_enter", "on_mouse_over")
+	connect_safely(box, "click", "on_line_clicked")
 
 	find_editor_script()
+	on_settings_changed()
 
 #.............................................................................................................
 
@@ -586,6 +647,7 @@ func _exit_tree():
 		remove_safely(timer)
 		disconnect_safely(timer, "timeout", "update")
 		timer.free()
+		timer = null
 
 	if editor_tabs != null:
 
@@ -594,9 +656,13 @@ func _exit_tree():
 
 	if box != null:
 
-		disconnect_safely(box, "mouse_enter", CANCEL)
+		disconnect_safely(box, "mouse_enter", "on_mouse_over")
+		disconnect_safely(box, "click", "on_line_clicked")
 		box.free()
+		box = null
 
 	if lines != null: lines.clear()
+	re = null
+	default_font = null
 
 	disconnect_safely(get_editor_settings(), "settings_changed", "on_settings_changed")

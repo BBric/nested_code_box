@@ -6,6 +6,7 @@
 #
 # append ..............	Ajoute une ligne
 # clear ...............	Supprime toutes les lignes
+# compute_height ......	Récupére la hauteur utile
 # reload_settings .....	Recharge les paramètres de l'éditeur
 # size ................	Récupére le nombre de lignes
 #
@@ -20,19 +21,22 @@ const _HIGHLIGHTED_NUMBERED_LINE = "[color=#%s]%0*d[/color] %s[color=#%s]%s[/col
 const _HIGHLIGHTED_LINE = "%s[color=#%s]%s[/color]%s"
 const _NUMBERED_LINE = "%0*d %s"
 const _TEXT_EDITOR = "text_editor/%s"
-const _NORMAL_FONT = "normal_font"
-const _DEFAULT_COLOR = "default_color"
+const _CLICK = "click"
+const _TOP_MARGIN = 2
+const _LEFT_MARGIN = 13
+const _BORDER = 1
 
 var _plugin # WeakRef<NestedCodeBox.gd>
-var _container # VBoxContainer
-var _lines # [RichTextLabel]
-var _style_box # StyleBoxFlat
+var _lines # [Line]
+var _line_height # int
+var _skin # StyleBoxFlat
 var _font # Font
 var _line_number_color # String
 var _keyword_color # String
 var _text_color # Color
 var _syntax_highlighting # bool
 var _show_line_numbers # bool
+var _trash # [Line]
 
 #.............................................................................................................
 
@@ -40,23 +44,20 @@ var _show_line_numbers # bool
 
 func append(line, code, keyword_begin, keyword_end): # int, String, int, int
 
-	var n = _lines.size()
 	var s = code
 	var d = _plugin.get_ref().digits
 	var i = 0
 	var l
+	var n = get_child_count() # l'ordre dans lines n'a pas d'influence
 
-	for i in _lines: # RichTextLabel
+	for i in _lines: # Line
 
 		if i.get_parent() == null:
 
 			l = i
 			break
 
-	if l == null:
-
-		l = _create_line()
-		_lines.append(l)
+	if l == null: l = _create_new_line()
 
 	if _syntax_highlighting:
 
@@ -76,8 +77,13 @@ func append(line, code, keyword_begin, keyword_end): # int, String, int, int
 
 		s = _NUMBERED_LINE % [d, line + 1, code]
 
-	l.set_bbcode(s)
-	_container.add_child(l) # la ligne n'est jamais déjà affichée
+	l.line = line
+	l.label.set_bbcode(s)
+
+	if n > 0: l.set_pos(Vector2(_BORDER, _TOP_MARGIN + n * _line_height))
+	else: l.set_pos(Vector2(_BORDER, _TOP_MARGIN))
+
+	add_child(l) # la ligne n'est jamais déjà affichée
 
 #.............................................................................................................
 
@@ -87,9 +93,9 @@ func clear():
 
 	var j = 0
 
-	for i in _lines: # RichTextLabel
+	for i in _lines: # Line
 
-		if i.get_parent() != null: _container.remove_child(i)
+		if i.get_parent() != null: i.get_parent().remove_child(i)
 		if j >= _CAPACITY: i.free()
 		j += 1
 
@@ -97,7 +103,21 @@ func clear():
 
 #.............................................................................................................
 
-# Recharge les paramètres de l'éditeur.
+# Récupére la hauteur utile.
+
+func compute_height():
+
+	if _line_height == 0:
+
+		_compute_line_height()
+		for i in range(get_child_count()): _lines[i].set_pos(Vector2(_BORDER, _TOP_MARGIN + i * _line_height))
+
+	return _TOP_MARGIN + get_child_count() * _line_height + _BORDER
+
+#.............................................................................................................
+
+# Recharge les paramètres de l'éditeur. Doit être appelée avant append(), un appel interne dans
+# compute_height() ignore tous les paramètres pour les lignes ajoutées.
 
 func reload_settings():
 
@@ -110,24 +130,25 @@ func reload_settings():
 	var f = s.get(_TEXT_EDITOR % "font")
 	if f.length() > 0: _font = load(f)
 	if _font == null: _font = _plugin.get_ref().default_font
+	if _line_height > 0: _compute_line_height()
 
 	var c = s.get(_TEXT_EDITOR % "background_color")
 	c.a = _plugin.get_ref().background_opacity
-	_style_box.set_bg_color(c)
+	_skin.set_bg_color(c)
 
 	_text_color = s.get(_TEXT_EDITOR % "text_color")
 	c = _text_color
 	c.a = _plugin.get_ref().border_opacity
-	_style_box.set_light_color(c)
-	_style_box.set_dark_color(c)
+	_skin.set_light_color(c)
+	_skin.set_dark_color(c)
 
-	for i in range(_CAPACITY): _set_line(_lines[i])
+	for i in range(_CAPACITY): _lines[i].format(_font, _text_color, _plugin.get_ref().button_opacity)
 
 #.............................................................................................................
 
 # Récupére le nombre de lignes.
 
-func size(): return _container.get_child_count()
+func size(): return get_child_count()
 
 #.............................................................................................................
 
@@ -135,12 +156,12 @@ func trace():
 
 	var s
 
-	for i in _lines:
+	for i in _lines: # Line
 
 		if i.get_parent() == null: break
 		if s != null: s += "\n"
 		else: s = ""
-		s += i.get_text()
+		s += i.label.get_text()
 
 	if s == null: print("empty")
 	else: print(s)
@@ -151,58 +172,182 @@ func trace():
 
 #.............................................................................................................
 
+# Calcule la hauteur d'une ligne.
+#
+# NestedCodeBox::editor_vscrollbar::get_page() vaut 0 au démarrage même si le script en cours a une barre
+# verticale, et ne peut être utilisée qu'après le premier clic qui appelle compute_height().
+# Donc pour que compute_height() renvoie la bonne hauteur dès le premier appel _line_height doit rester à 0
+# pour indiquer qu'elle n'a pas été calculée au moins une fois grâce à get_page().
+# Les lignes sont positionnées par append() ou compute_height() et redimensionnées par _on_resized().
+
+func _compute_line_height():
+
+	if _plugin == null or _plugin.get_ref() == null or _plugin.get_ref().editor_script == null: return
+
+	var p = _plugin.get_ref().editor_vscrollbar.get_page()
+	if p == 0: return
+
+	if _font == null: _line_height = 20 # hauteur minimale d'un bouton
+	else: _line_height = int(max(20, ceil(_font.get_height())))
+
+	var h = _plugin.get_ref().editor_script.get_size().height
+	_line_height = int(max(round(h / p), _line_height))
+
+#.............................................................................................................
+
 # Redimensionnement de l'occurrence.
 
-func _on_resized(): _container.set_size(get_size())
+func _on_resized():
+
+	var s = Vector2(get_size().width - 2 * _BORDER, _line_height)
+	for i in _lines: i.set_size(s)
 
 #.............................................................................................................
 
-func _create_line(): # : RichTextLabel
-
-	var l = RichTextLabel.new()
-	l.set_use_bbcode(true)
-	l.set_selection_enabled(false)
-	l.set_scroll_active(false)
-	l.set_v_size_flags(Control.SIZE_EXPAND_FILL)
-	l.set_ignore_mouse(true)
-	return _set_line(l)
+func _on_mouse_over(): emit_signal("mouse_enter") # pour les survols rapides
 
 #.............................................................................................................
 
-func _set_line(l): # RichTextLabel : RichTextLabel
+# Clic sur une ligne. La ligne est supprimée sinon elle garde son état (une meilleure solution ?).
 
-	if _font != null: l.add_font_override(_NORMAL_FONT, _font)
-	if _text_color != null: l.add_color_override(_DEFAULT_COLOR, _text_color)
+func _on_line_clicked(line): # int
+
+	var l = _lines[line]
+	var n = l.line
+	_trash.append(l)
+
+	if line < _CAPACITY: _create_new_line(true, line)
+
+	l.get_parent().remove_child(l)
+	emit_signal(_CLICK, n)
+	call_deferred("_empty_trash")
+
+#.............................................................................................................
+
+# Supprime les lignes cliquées. Dans _on_line_clicked() elles sont verrouillées.
+
+func _empty_trash():
+
+	for i in _trash:
+		if i.get_parent() != null: i.get_parent().remove_child(i)
+		i.disconnect("pressed", self, "_on_line_clicked")
+		i.free()
+
+	_trash.clear()
+
+#.............................................................................................................
+
+# Crée et récupére une nouvelle ligne.
+#
+# resize ......	Redimensionner
+# index .......	Indice de remplacement
+
+func _create_new_line(resize = true, index = -1): # boolean, int: Line
+
+	var l = Line.new()
+	l.format(_font, _text_color, _plugin.get_ref().button_opacity)
+
+	if not _plugin.get_ref().enable_targetting: l.set_ignore_mouse(true)
+	elif index < 0: l.connect("pressed", self, "_on_line_clicked", [_lines.size()])
+	else: l.connect("pressed", self, "_on_line_clicked", [index])
+
+	if resize: l.set_size(Vector2(get_size().width - 2 * _BORDER, _line_height))
+	l.connect("mouse_enter", self, "_on_mouse_over")
+	if index < 0: _lines.append(l)
+	else: _lines[index] = l
+
 	return l
 
 #.. Object ...................................................................................................
 
 func free():
 
-	_plugin.free()
+	_plugin = null # Reference
 	for i in _lines: i.free()
 	_lines.clear()
+	_lines = null
+	_empty_trash()
+	_trash = null
+	add_style_override("panel", StyleBoxEmpty.new())
+	_skin = null # Reference
 	if is_connected("resized", self, "_on_resized"): disconnect("resized", self, "_on_resized")
 	.free()
 
 #.............................................................................................................
 
-func _init(plugin, top_margin): # NestedCodeBox.gd, int
+func _init(plugin): # NestedCodeBox.gd
 
 	_plugin = weakref(plugin)
+	add_user_signal("click", [{"name":"line", "type":TYPE_INT}])
 
-	_style_box = StyleBoxFlat.new()
-	_style_box.set_border_size(1)
-	add_style_override("panel", _style_box)
-
-	_container = VBoxContainer.new()
-	_container.set_ignore_mouse(true)
-	_container.set_margin(MARGIN_TOP, top_margin)
-	_container.set_margin(MARGIN_LEFT, 14)
-	_container.add_constant_override("separation", 0) # 4 par défaut
-	add_child(_container)
+	_skin = StyleBoxFlat.new()
+	_skin.set_border_size(_BORDER)
+	add_style_override("panel", _skin)
+	_line_height = 0
 	_lines = []
+	_trash = []
 
-	for i in range(_CAPACITY): _lines.append(_create_line())
-
+	for i in range(_CAPACITY): _create_new_line(false)
+	set_custom_minimum_size(Vector2(2 * _BORDER, _TOP_MARGIN + _BORDER))
 	connect("resized", self, "_on_resized")
+
+#.............................................................................................................
+
+class Line:
+
+	#.........................................................................................................
+
+	extends Button
+
+	#.........................................................................................................
+
+	var line # int
+	var label # RichTextLabel
+	var skin # StyleBoxFlat
+
+	#.........................................................................................................
+
+	func _init():
+
+		skin = StyleBoxFlat.new()
+		set_flat(true)
+		add_style_override("hover", skin)
+		add_style_override("pressed", skin)
+		add_style_override("focus", StyleBoxEmpty.new())
+
+		label = RichTextLabel.new()
+		label.set_use_bbcode(true)
+		label.set_selection_enabled(false)
+		label.set_scroll_active(false)
+		label.set_ignore_mouse(true)
+		label.set_pos(Vector2(_LEFT_MARGIN, 0))
+		add_child(label)
+		connect("resized", self, "on_resized")
+
+	#.........................................................................................................
+
+	func format(font, color, opacity):
+
+		if font != null: label.add_font_override("normal_font", font)
+
+		if color != null:
+
+			label.add_color_override("default_color", color)
+			color.a = opacity
+			skin.set_bg_color(color)
+
+	#.........................................................................................................
+
+	func on_resized(): label.set_size(get_size())
+
+	#.........................................................................................................
+
+	func free():
+
+		remove_child(label)
+		label.free()
+		label = null
+		add_style_override("hover", StyleBoxEmpty.new())
+		add_style_override("pressed", StyleBoxEmpty.new())
+		skin = null # Reference
+		if is_connected("resized", self, "on_resized"): disconnect("resized", self, "on_resized")

@@ -3,8 +3,12 @@
 	"from_root":false,
 	"hide_visible":false,
 	"hide_first_line":true,
+	"enable_targetting":true,
+	"ignore_echo":false,
 	"delay":3.5,
 	"lines_gap":1,
+	"lines_margin":1,
 	"background_opacity":0.7,
-	"border_opacity":0.5
+	"border_opacity":0.5,
+	"button_opacity":0.05
 }
