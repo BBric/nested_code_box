@@ -387,45 +387,37 @@ func find_editor_script():
 
 	for i in t.get_children():
 
-		if i.get_type() == CODE_TEXT_EDITOR:
+		if i.get_type() == TEXT_EDIT:
 
 			for j in i.get_children():
 
-				if j.get_type() == TEXT_EDIT:
+				if j.get_type() == V_SCROLL_BAR:
 
-					for k in j.get_children():
+					v = j
+					if h != null: break
 
-						if k.get_type() == V_SCROLL_BAR:
+				if j.get_type() == H_SCROLL_BAR:
 
-							v = k
-							if h != null: break
+					h = j
+					if v != null: break
 
-						if k.get_type() == H_SCROLL_BAR:
+			if v != null and h != null:
 
-							h = k
-							if v != null: break
+				editor_script = i
+				editor_vscrollbar = v
+				editor_hscrollbar = h
 
-					if v != null and h != null:
+				if default_font == null: default_font = i.get("custom_fonts/font")
 
-						editor_script = j
-						editor_vscrollbar = v
-						editor_hscrollbar = h
-
-						if default_font == null: default_font = j.get("custom_fonts/font")
-
-						connect_safely(j, EXIT_TREE, ON_SCRIPT_EXIT_TREE)
-						connect_safely(j, TEXT_CHANGED, ON_TEXT_CHANGED)
-						connect_safely(j, CURSOR_CHANGED, ON_CURSOR_CHANGED)
-						connect_safely(j, RESIZED, ON_RESIZED)
-						connect_safely(v, VALUE_CHANGED, ON_SCROLL)
-						connect_safely(h, VALUE_CHANGED, ON_SCROLL)
-						width = int(round(j.get_size().width - v.get_size().width))
-
-					return
+				connect_safely(i, EXIT_TREE, ON_SCRIPT_EXIT_TREE)
+				connect_safely(i, TEXT_CHANGED, ON_TEXT_CHANGED)
+				connect_safely(i, CURSOR_CHANGED, ON_CURSOR_CHANGED)
+				connect_safely(i, RESIZED, ON_RESIZED)
+				connect_safely(v, VALUE_CHANGED, ON_SCROLL)
+				connect_safely(h, VALUE_CHANGED, ON_SCROLL)
+				width = int(round(i.get_size().width - v.get_size().width))
 
 			return
-
-		return
 
 #.............................................................................................................
 

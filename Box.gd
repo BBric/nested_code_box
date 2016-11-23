@@ -273,10 +273,9 @@ func free():
 	_lines = null
 	_empty_trash()
 	_trash = null
-	add_style_override("panel", StyleBoxEmpty.new())
+	#add_style_override("panel", StyleBoxEmpty.new())
 	_skin = null # Reference
 	if is_connected("resized", self, "_on_resized"): disconnect("resized", self, "_on_resized")
-	.free()
 
 #.............................................................................................................
 
@@ -352,7 +351,5 @@ class Line:
 		remove_child(label)
 		label.free()
 		label = null
-		add_style_override("hover", StyleBoxEmpty.new())
-		add_style_override("pressed", StyleBoxEmpty.new())
 		skin = null # Reference
 		if is_connected("resized", self, "on_resized"): disconnect("resized", self, "on_resized")
