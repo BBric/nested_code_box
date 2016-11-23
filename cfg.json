@@ -5,6 +5,7 @@
 	"hide_first_line":true,
 	"enable_targetting":true,
 	"ignore_echo":false,
+	"ignore_white":true,
 	"delay":3.5,
 	"lines_gap":1,
 	"lines_margin":1,

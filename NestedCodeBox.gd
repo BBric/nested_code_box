@@ -37,6 +37,7 @@ var hide_visible # bool
 var hide_first_line # bool
 var enable_targetting # bool
 var ignore_echo # bool
+var ignore_white # bool
 var lines_gap # int
 var lines_margin # int
 var background_opacity # float
@@ -46,7 +47,7 @@ var digits # int
 var lines # Array
 var index # int
 var changed # bool
-var size # Vector2
+var width # int
 var last # int
 
 #.............................................................................................................
@@ -148,10 +149,8 @@ func update():
 			box.append(d[0], d[1], d[2], d[2] + d[3])
 			i += 1
 
-	size.height = box.compute_height()
-	box.set_size(size)
+	box.set_size(Vector2(width, box.compute_height()))
 	add_safely(editor_script, box)
-	idle = false
 
 #.............................................................................................................
 
@@ -239,6 +238,8 @@ func on_cursor_changed():
 	# déplacement par clic
 
 	cancel()
+	if editor_script.is_selection_active(): return # texte sélectionné (appels multiples)
+
 	var l = editor_script.cursor_get_line()
 
 	# column == 0 évite un affichage trop fréquent sur une ligne vide
@@ -262,8 +263,9 @@ func on_cursor_changed():
 		if t.ord_at(i) != c: break
 		i += 1
 
-	if i != editor_script.cursor_get_column(): return
+	if i != editor_script.cursor_get_column() or (ignore_white and i == n): return
 
+	idle = false # cancel() retourne si idle true
 	if delay > 0: timer.start()
 	else: update() # le passage par timer donne un délai de mini 1s [2.1]
 
@@ -283,7 +285,9 @@ func on_line_clicked(line): # int
 func on_resized():
 
 	cancel()
-	if editor_script != null: size.width = editor_script.get_size().width - editor_vscrollbar.get_size().width
+
+	if editor_script != null:
+		width = int(round(editor_script.get_size().width - editor_vscrollbar.get_size().width))
 
 #.............................................................................................................
 
@@ -415,7 +419,7 @@ func find_editor_script():
 						connect_safely(j, RESIZED, ON_RESIZED)
 						connect_safely(v, VALUE_CHANGED, ON_SCROLL)
 						connect_safely(h, VALUE_CHANGED, ON_SCROLL)
-						size.width = j.get_size().width - v.get_size().width
+						width = int(round(j.get_size().width - v.get_size().width))
 
 					return
 
@@ -515,6 +519,10 @@ func load_config():
 			if typeof(v) != TYPE_BOOL: r = true
 			else: ignore_echo = v
 
+			v = d.ignore_white
+			if typeof(v) != TYPE_BOOL: r = true
+			else: ignore_white = v
+
 			v = d.delay
 			if typeof(v) != TYPE_REAL: r = true
 			else: delay = max(0.0, v)
@@ -554,13 +562,13 @@ func load_config():
 	if f.open(s, File.WRITE) == OK:
 
 		var p = "\n\t\"%s\":%s"
-		var c = "{%s,%s,%s,%s,%s,%s,%s,%s\n}"
+		var c = "{%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n}"
 		f.store_string(c % [p % ["max_lines", max_lines], p % ["from_root", str(from_root).to_lower()],\
 							p % ["hide_visible", str(hide_visible).to_lower()],\
 							p % ["hide_first_line", str(hide_first_line).to_lower()],\
 							p % ["enable_targetting", str(enable_targetting).to_lower()],\
 							p % ["ignore_echo", str(ignore_echo).to_lower()],\
-							p % ["delay", delay],\
+							p % ["ignore_white", str(ignore_white).to_lower()], p % ["delay", delay],\
 							p % ["lines_gap", lines_gap], p % ["lines_margin", lines_margin],\
 							p % ["background_opacity", background_opacity],\
 							p % ["border_opacity", border_opacity],\
@@ -600,6 +608,7 @@ func _enter_tree():
 	hide_first_line = true
 	enable_targetting = true
 	ignore_echo = false
+	ignore_white = true
 	delay = 3.5
 	lines_gap = 1
 	lines_margin = 2
@@ -609,7 +618,7 @@ func _enter_tree():
 	idle = true
 	changed = false
 	lines = []
-	size = Vector2(0, 0)
+	width = 0
 	last = -1 # -1: non initialisée, 0: aucune valeur
 
 	load_config()

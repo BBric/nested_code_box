@@ -178,6 +178,8 @@ func trace():
 # verticale, et ne peut être utilisée qu'après le premier clic qui appelle compute_height().
 # Donc pour que compute_height() renvoie la bonne hauteur dès le premier appel _line_height doit rester à 0
 # pour indiquer qu'elle n'a pas été calculée au moins une fois grâce à get_page().
+# Si un paramètre qui change la hauteur de ligne est modifié et que le script en cours a un get_page() 0,
+# _line_height est réinitialisée à 0 pour forcer la mise à jour ultérieure.
 # Les lignes sont positionnées par append() ou compute_height() et redimensionnées par _on_resized().
 
 func _compute_line_height():
@@ -185,7 +187,10 @@ func _compute_line_height():
 	if _plugin == null or _plugin.get_ref() == null or _plugin.get_ref().editor_script == null: return
 
 	var p = _plugin.get_ref().editor_vscrollbar.get_page()
-	if p == 0: return
+
+	if p == 0:
+		_line_height = 0
+		return
 
 	if _font == null: _line_height = 20 # hauteur minimale d'un bouton
 	else: _line_height = int(max(20, ceil(_font.get_height())))

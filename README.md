@@ -24,6 +24,7 @@ cfg.json:
 * *hide_first_line* : Override 'hide_visible=false' for the first line, and the following if the blocks are close
 * *enable_targetting* : Activate the targetting of the parent blocks
 * *ignore_echo* : Don't show the box if the caret is stayed on the same line
+* *ignore_white* : Don't show the box if the line contains only spaces/tabs (the empty lines are always ignored)
 * *delay* : Time in seconds before to show the box. The display is canceled each time something happens in the text editor
 * *lines_gap* : Minimal number of lines between the current line and the box (0 to 3)
 * *lines_margin*: Minimal number of lines above of the current line when a parent block is targetted
