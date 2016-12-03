@@ -4,7 +4,6 @@ extends EditorPlugin
 
 #.............................................................................................................
 
-const CODE_TEXT_EDITOR = "CodeTextEditor"
 const TEXT_EDIT = "TextEdit"
 const V_SCROLL_BAR = "VScrollBar"
 const H_SCROLL_BAR = "HScrollBar"
@@ -21,10 +20,13 @@ const ON_SCROLL = "on_scroll"
 const ON_SCRIPT_EXIT_TREE = "on_script_exit_tree"
 const ON_TEXT_CHANGED = "on_text_changed"
 
+const REGEX_22_FIX = { "fu":4, "st":11, "if":2, "fo":3, "els":4, "eli":4, "wh":5, "cl":5 }
+
 var editor_tabs # TabContainer
 var editor_script # TextEdit
 var editor_vscrollbar # VScrollBar
 var editor_hscrollbar # HScrollBar
+var script_path # [String]
 var box # Box.gd
 var re # RegEx
 var timer # Timer
@@ -49,6 +51,8 @@ var index # int
 var changed # bool
 var width # int
 var last # int
+var skip # bool
+var v21 # bool
 
 #.............................................................................................................
 
@@ -150,7 +154,8 @@ func update():
 			i += 1
 
 	box.set_size(Vector2(width, box.compute_height()))
-	add_safely(editor_script, box)
+	skip = true
+	add_safely(get_base_control(), box)
 
 #.............................................................................................................
 
@@ -202,27 +207,50 @@ func find_all_lines(i):
 	if r == 0: return # curseur hors bloc
 
 	var f = editor_vscrollbar.get_value()
+	var m
 	i -= 1
 
 	while i > -1:
 
 		t = editor_script.get_line(i)
+		m = search(t)
 
-		if re.find(t) > -1: # bloc
+		if m != null and m[0] < r:
 
-			n = t.length() - re.get_capture(1).length() # indentation
+			r = m[0]
 
-			if n < r: # bloc parent
+			if index > -1 and i < f: index += 1
+			elif index < 0 and i >= f: index = 0
 
-				r = n
-
-				if index > -1 and i < f: index += 1
-				elif index < 0 and i >= f: index = 0
-
-				lines.push_front([i, t, re.get_capture_start(2), re.get_capture(2).length()])
-				if r == 0: return # bloc racine
+			lines.push_front([i, t, r, m[1]])
+			if r == 0: return # bloc racine
 
 		i -= 1
+
+#............................................................................................................
+
+# Récupére une recherche multi versions sous la forme [indice du mot-clef, longueur du mot-clef].
+
+func search(s): # String : []
+
+	if not v21:
+
+		if s.length() == 0: return
+		var r = re.search(s) # Condition ' p_start >= p_text.length() ' is true. returned: __null
+		if r == null: return
+		var a = [r.get_start(2), r.get_string(2).length()]
+
+		if a[1] == 0: # [2.2A]
+
+			var k = r.get_string(1).substr(0, 2)
+			if not REGEX_22_FIX.has(k): k = r.get_string(1).substr(0, 3) # else, elif
+			a[1] = REGEX_22_FIX[k]
+
+		return a
+
+	elif re.find(s) >= 0:
+
+		return [re.get_capture_start(2), re.get_capture(2).length()]
 
 #.............................................................................................................
 
@@ -265,7 +293,7 @@ func on_cursor_changed():
 
 	if i != editor_script.cursor_get_column() or (ignore_white and i == n): return
 
-	idle = false # cancel() retourne si idle true
+	idle = false # cancel() retourne si idle true, ce qui empêche d'annuler
 	if delay > 0: timer.start()
 	else: update() # le passage par timer donne un délai de mini 1s [2.1]
 
@@ -287,6 +315,8 @@ func on_resized():
 	cancel()
 
 	if editor_script != null:
+
+		box.set_pos(editor_script.get_global_rect().pos)
 		width = int(round(editor_script.get_size().width - editor_vscrollbar.get_size().width))
 
 #.............................................................................................................
@@ -341,6 +371,13 @@ func on_text_changed():
 
 #.............................................................................................................
 
+func on_viewport_draw():
+
+	if skip: skip = false # actualisation pour l'affichage de la boîte
+	else: cancel() # autre actualisation (menu, bulle d'aide...)
+
+#.............................................................................................................
+
 # Arrête le timer, masque la boîte et revient au repos.
 
 func cancel():
@@ -350,6 +387,7 @@ func cancel():
 	set_process(false)
 	if timer != null: timer.stop()
 	if box != null and box.get_parent() != null: box.get_parent().remove_child(box)
+	skip = false
 	idle = true
 
 #.............................................................................................................
@@ -381,66 +419,43 @@ func unregister_script():
 func find_editor_script():
 
 	unregister_script()
-	var t = editor_tabs.get_current_tab_control()
-	if t == null: return
-	var h; var v
+	var o = editor_tabs.get_current_tab_control()
+	for i in script_path: o = find_node(o, i)
 
-	for i in t.get_children():
+	if o == null: return
 
-		if i.get_type() == TEXT_EDIT:
+	var v = find_node(o, V_SCROLL_BAR)
+	var h = find_node(o, H_SCROLL_BAR)
 
-			for j in i.get_children():
+	if v == null or h == null: return
 
-				if j.get_type() == V_SCROLL_BAR:
+	editor_script = o
+	editor_vscrollbar = v
+	editor_hscrollbar = h
 
-					v = j
-					if h != null: break
+	if default_font == null: default_font = o.get("custom_fonts/font")
 
-				if j.get_type() == H_SCROLL_BAR:
-
-					h = j
-					if v != null: break
-
-			if v != null and h != null:
-
-				editor_script = i
-				editor_vscrollbar = v
-				editor_hscrollbar = h
-
-				if default_font == null: default_font = i.get("custom_fonts/font")
-
-				connect_safely(i, EXIT_TREE, ON_SCRIPT_EXIT_TREE)
-				connect_safely(i, TEXT_CHANGED, ON_TEXT_CHANGED)
-				connect_safely(i, CURSOR_CHANGED, ON_CURSOR_CHANGED)
-				connect_safely(i, RESIZED, ON_RESIZED)
-				connect_safely(v, VALUE_CHANGED, ON_SCROLL)
-				connect_safely(h, VALUE_CHANGED, ON_SCROLL)
-				width = int(round(i.get_size().width - v.get_size().width))
-
-			return
+	connect_safely(o, EXIT_TREE, ON_SCRIPT_EXIT_TREE)
+	connect_safely(o, TEXT_CHANGED, ON_TEXT_CHANGED)
+	connect_safely(o, CURSOR_CHANGED, ON_CURSOR_CHANGED)
+	connect_safely(o, RESIZED, ON_RESIZED)
+	connect_safely(v, VALUE_CHANGED, ON_SCROLL)
+	connect_safely(h, VALUE_CHANGED, ON_SCROLL)
+	box.set_pos(o.get_global_rect().pos)
+	width = int(round(o.get_size().width - v.get_size().width))
 
 #.............................................................................................................
 
 func find_editor_tabs():
 
-	for i in get_editor_viewport().get_children():
+	editor_tabs = get_editor_viewport()
+	for i in ["ScriptEditor", "HSplitContainer", "TabContainer"]: editor_tabs = find_node(editor_tabs, i)
 
-		if i.get_type() == "ScriptEditor":
+#.............................................................................................................
 
-			for j in i.get_children():
+func find_node(node, type): # Node, String
 
-				if j.get_type() == "HSplitContainer":
-
-					for k in j.get_children():
-
-						if k.get_type() == "TabContainer":
-
-							editor_tabs = k
-							return
-
-					return
-
-			return
+	if node != null: for i in node.get_children(): if i.get_type() == type: return i
 
 #.............................................................................................................
 
@@ -572,7 +587,7 @@ func load_config():
 
 func _process(delta):
 
-	var r = box.get_global_rect() # Rect2::has_point() exclus les limites {2.1]
+	var r = box.get_global_rect() # Rect2::has_point() exclus les limites [2.1]
 	var p = box.get_global_mouse_pos()
 	if p.x < r.pos.x or p.y < r.pos.y or p.x > r.end.x or p.y > r.end.y: cancel()
 
@@ -594,6 +609,11 @@ func _enter_tree():
 		OS.alert("Unable to find editor tabs", "Nested Code Box plugin error")
 		return
 
+	script_path = ["CodeTextEditor", "TextEdit"]
+	var v = OS.get_engine_version()
+	v21 = float(v.major + "." + v.minor) < 2.2
+	if v21: script_path.pop_front()
+
 	max_lines = 0
 	from_root = false
 	hide_visible = false
@@ -611,6 +631,7 @@ func _enter_tree():
 	changed = false
 	lines = []
 	width = 0
+	skip = false
 	last = -1 # -1: non initialisée, 0: aucune valeur
 
 	load_config()
@@ -628,6 +649,7 @@ func _enter_tree():
 	timer.connect("timeout", self, "update")
 	add_safely(get_base_control(), timer)
 
+	connect_safely(get_editor_viewport(), "draw", "on_viewport_draw")
 	connect_safely(editor_tabs, "tab_changed", "on_tab_changed")
 	connect_safely(get_editor_settings(), "settings_changed", "on_settings_changed")
 	connect_safely(box, "mouse_enter", "on_mouse_over")
@@ -667,3 +689,4 @@ func _exit_tree():
 	default_font = null
 
 	disconnect_safely(get_editor_settings(), "settings_changed", "on_settings_changed")
+	disconnect_safely(get_editor_viewport(), "draw", "on_viewport_draw")

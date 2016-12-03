@@ -1,4 +1,4 @@
-# nested_code_box
+# Nested Code Box
 A plugin for the [Godot game engine](https://github.com/godotengine/godot) [2.1.1].
 It display the hidden start blocks in a frame at the top of the script editor.
 

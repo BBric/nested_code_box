@@ -8,7 +8,6 @@
 # clear ...............	Supprime toutes les lignes
 # compute_height ......	Récupére la hauteur utile
 # reload_settings .....	Recharge les paramètres de l'éditeur
-# size ................	Récupére le nombre de lignes
 #
 #.............................................................................................................
 
@@ -146,28 +145,6 @@ func reload_settings():
 
 #.............................................................................................................
 
-# Récupére le nombre de lignes.
-
-func size(): return get_child_count()
-
-#.............................................................................................................
-
-func trace():
-
-	var s
-
-	for i in _lines: # Line
-
-		if i.get_parent() == null: break
-		if s != null: s += "\n"
-		else: s = ""
-		s += i.label.get_text()
-
-	if s == null: print("empty")
-	else: print(s)
-
-#.............................................................................................................
-
 # PRIVATE
 
 #.............................................................................................................
@@ -234,6 +211,7 @@ func _on_line_clicked(line): # int
 func _empty_trash():
 
 	for i in _trash:
+
 		if i.get_parent() != null: i.get_parent().remove_child(i)
 		i.disconnect("pressed", self, "_on_line_clicked")
 		i.free()
@@ -263,19 +241,21 @@ func _create_new_line(resize = true, index = -1): # boolean, int: Line
 
 	return l
 
+
 #.. Object ...................................................................................................
 
 func free():
 
+	clear()
 	_plugin = null # Reference
 	for i in _lines: i.free()
 	_lines.clear()
 	_lines = null
 	_empty_trash()
 	_trash = null
-	#add_style_override("panel", StyleBoxEmpty.new())
 	_skin = null # Reference
 	if is_connected("resized", self, "_on_resized"): disconnect("resized", self, "_on_resized")
+	.free()
 
 #.............................................................................................................
 
@@ -350,6 +330,6 @@ class Line:
 
 		remove_child(label)
 		label.free()
-		label = null
 		skin = null # Reference
 		if is_connected("resized", self, "on_resized"): disconnect("resized", self, "on_resized")
+		.free()
